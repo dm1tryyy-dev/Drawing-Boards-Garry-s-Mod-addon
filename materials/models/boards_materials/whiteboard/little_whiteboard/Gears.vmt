@@ -1,0 +1,6 @@
+"VertexLitGeneric"
+{
+    "$color2"        "[0.118 0.196 0.353]"
+    "$surfaceprop"  "plastic"
+    "$fresnelreflection" "1"
+}

@@ -1,0 +1,9 @@
+"VertexLitGeneric"
+{
+    "$envmap" "env_cubemap"
+    "$envmaptint" "[0.5 0.5 0.5]"
+    "$phong" "1"
+    "$phongexponent" "5"
+    "$surfaceprop" "metal"
+    "$basetexture" "models/boards_materials/whiteboard/front_texture"
+}

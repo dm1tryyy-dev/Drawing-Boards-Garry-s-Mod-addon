@@ -1,0 +1,6 @@
+"VertexLitGeneric"
+{
+    "$color"        "[0.8 0.8 0.8]"
+    "$surfaceprop"  "metal"
+    "$reflectivity" "[0.05 0.05 0.05]"
+}

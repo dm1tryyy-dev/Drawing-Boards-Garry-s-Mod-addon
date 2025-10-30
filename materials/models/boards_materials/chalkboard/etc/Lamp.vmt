@@ -1,0 +1,8 @@
+"VertexLitGeneric"
+{
+    "$color2"        "[0.8 0.8 0.8]"
+    "$surfaceprop"  "metal"          
+    "$envmap"       "env_cubemap"
+    "$phong"        "1"
+    "$phongexponent" "30"
+}

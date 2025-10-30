@@ -1,0 +1,7 @@
+"UnlitGeneric"
+{
+	"$basetexture" "vgui/entities/chalk_wep_icon"
+	"$vertexcolor" 1
+	"$vertexalpha" 1
+	"$nolod" 1
+}

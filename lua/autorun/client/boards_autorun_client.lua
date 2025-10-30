@@ -1,0 +1,8 @@
+net.Receive("DrawingBoardsWelcome", function()
+    chat.AddText(Color(0,186,235), "Loading the addon Drawing Boards")
+    chat.AddText(Color(0,235,52), "#####################################################################################################################################")
+	chat.AddText("")
+    chat.AddText(Color(0,186,235), "    ***    ", Color(235,98,10), "Welcome to the Drawing Boards", Color(0,186,235), " | ", Color(0,235,52), "Addon is active! Open it from the tools menu and let your creativity run wild!", Color(0,186,235), "    ***    ")
+	chat.AddText("")
+    chat.AddText(Color(0,235,52), "#####################################################################################################################################")
+end)

@@ -1,7 +1,7 @@
 {
     "title"       : "Drawing Boards",
-    "type"        : "servercontent",
-    "tags"        : "whiteboard, chalk, draw, markers, boards, chalkboard, tools",
+    "type"        : "addon",
+    "tags"        : ["entity", "fun", "realism"],
     "description" : "This addon adding drawing boards. It includes three types of boards and drawing tools for creativity.",
     "ignore" : [
         "models_source",

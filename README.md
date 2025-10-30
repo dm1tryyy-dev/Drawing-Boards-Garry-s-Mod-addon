@@ -1,2 +1,4 @@
 # Drawing-Boards-Garry-s-Mod-addon
-Мой личный аддон в Garry's mod
+My personal addon in Garry's mod
+
+All models and some textures is created by dm1itryy-dev in program Blender 4.0

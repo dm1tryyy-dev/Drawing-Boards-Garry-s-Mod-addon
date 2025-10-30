@@ -1,6 +1,6 @@
 # Drawing-Boards-Garry-s-Mod-addon
 My personal addon in Garry's mod: https://steamcommunity.com/sharedfiles/filedetails/?id=3595295430
-## Descriptions
+## Description
 Drawing Boards is a comprehensive addon that brings fully drawable surfaces to Garry's Mod. 
 Featuring three beautifully crafted board types and intuitive drawing tools, this addon is perfect for roleplay servers, educational scenarios, or creative building projects.
 ## Features

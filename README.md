@@ -13,4 +13,4 @@ Featuring three beautifully crafted board types and intuitive drawing tools, thi
 ![20251027173719_2](https://github.com/user-attachments/assets/15579b7b-89ed-450a-9ee1-945b6fce487b)
 
 ------------------------------------------------------------------------------
-All models and some textures is created by dm1itryy-dev in program Blender 4.0
+All models and some textures is created by dm1itryy-dev in program Blender 4.0 and Adobe Photoshop

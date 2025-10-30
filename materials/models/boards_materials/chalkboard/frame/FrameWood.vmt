@@ -1,0 +1,8 @@
+"VertexLitGeneric"
+{
+    "$surfaceprop" "wood"
+    "$basetexture" "models/boards_materials/chalkboard/frame/frame_wood_diff"
+    "$envmaptint"  "[0.05 0.05 0.05]"
+    "$normalmap"   "models/boards_materials/chalkboard/frame_normal"
+    "envmapmask"  "models/boards_materials/chalkboard/frame/frame_wood_rough"
+}

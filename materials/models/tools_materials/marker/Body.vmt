@@ -1,0 +1,5 @@
+"VertexLitGeneric"
+{
+    "$basetexture" "models/tools_materials/marker/colors/marker_base_texture"
+    "$surfaceprop" "plastic"
+}

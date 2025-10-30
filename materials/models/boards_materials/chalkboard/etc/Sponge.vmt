@@ -1,0 +1,5 @@
+"VertexLitGeneric"
+{
+    "$basetexture" "models/boards_materials/chalkboard/etc/sponge_texture"
+    "$surfaceprop" "rubber"
+}

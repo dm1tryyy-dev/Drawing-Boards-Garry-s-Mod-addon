@@ -1,0 +1,16 @@
+"VertexLitGeneric"
+{
+    "$basetexture" "models/boards_materials/whiteboard/frame_texture"
+    "$normalmap" "models/boards_materials/whiteboard/frame_normal"
+    "$surfaceprop" "metal"
+    "$color" "[0.4 0.4 0.4]"
+    "$envmap" "env_cubemap"
+    "$reflectivity" "[0.03 0.03 0.03]"
+    "$normalmapalphaenvmapmask"   "1"      
+    "$envmapsaturation" "[1 1 1]"       
+
+    "$phong" "1"                        
+    "$phongboost" "2"                   
+    "$phongexponent" "15"               
+    "$phongfresnelranges" "[1 4 8]"                  
+}

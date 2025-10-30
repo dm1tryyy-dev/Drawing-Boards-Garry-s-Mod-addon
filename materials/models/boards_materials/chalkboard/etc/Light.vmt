@@ -1,0 +1,14 @@
+"UnlitGeneric"
+{
+    "$color"        "[1 1 1]"
+    "$surfaceprop"  "glass"
+    "$selfillum"    "1"
+    "$additive" "1"
+
+     // Script edit parameters
+    "$selfillumcolor" "[1 1 1]" 
+    "$selfillumbrightness" "2"
+
+    "$model"        "1"
+    "$nocull" "1"
+}

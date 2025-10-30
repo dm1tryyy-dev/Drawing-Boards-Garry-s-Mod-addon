@@ -1,0 +1,10 @@
+"VertexLitGeneric"
+{
+    "$basetexture" "models/boards_materials/whiteboard/little_whiteboard/legs_texture"
+    "$normalmap" "models/boards_materials/whiteboard/little_whiteboard/legs_normal"
+    "$color" "[0.75 0.75 0.75]"
+    "$surfaceprop" "metal"
+    "$envmap" "env_cubemap"
+    "$normalmapalphaenvmapmask"  "1"
+    "$phong" "1"
+}

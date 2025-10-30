@@ -1,0 +1,6 @@
+"VertexLitGeneric"
+{
+    "$color" "{0.443 0.443 0.443}"
+    "$surfaceprop" "plastic"
+    "$roughness" "0.95"
+}

@@ -1,11 +1,14 @@
 {
     "title"       : "Drawing Boards",
-    "type"        : "addon",
-    "tags"        : ["entity", "fun", "realism"],
+    "type"        : "model",
+    "tags"        : ["fun", "realism"],
     "description" : "This addon adding drawing boards. It includes three types of boards and drawing tools for creativity.",
     "ignore" : [
         "models_source",
         "*.smd",
-        "*.qc"
+        "*.qc",
+        ".git",
+        "LICENSE",
+        "README.md"
     ]
 }

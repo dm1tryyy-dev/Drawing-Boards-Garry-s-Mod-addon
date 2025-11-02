@@ -8,6 +8,17 @@ function ENT:Initialize()
     self:InitializeChalkboard()
     self.LastDrawPos = nil
     self.LastErasePos = nil
+
+    self.ProjectedTexture = ProjectedTexture()
+    if self.ProjectedTexture then
+        self.ProjectedTexture:SetTexture("effects/flashlight001")
+        self.ProjectedTexture:SetFarZ(200)
+        self.ProjectedTexture:SetFOV(120)
+        self.ProjectedTexture:SetEnableShadows(false)
+        self.ProjectedTexture:SetConstantAttenuation(1)
+        self.ProjectedTexture:SetLinearAttenuation(0.1)
+        self.ProjectedTexture:SetQuadraticAttenuation(0.01)
+    end
 end
 
 function ENT:InitializeChalkboard()
@@ -37,7 +48,6 @@ function ENT:InitializeChalkboard()
     
     chalkboardRTs[entIndex].mat = mat
     
-
     render.PushRenderTarget(rt)
     render.Clear(0, 0, 0, 0)
     render.PopRenderTarget()
@@ -48,6 +58,7 @@ end
 function ENT:ResetLastPosition()
     self.LastDrawPos = nil
 end
+
 function ENT:ResetLastErasePosition()
     self.LastErasePos = nil
 end
@@ -56,12 +67,10 @@ function ENT:ClearChalkboard()
     local entIndex = self:EntIndex()
     if not chalkboardRTs[entIndex] then return end
     
-
     if chalkboardData[entIndex] then
         chalkboardData[entIndex].drawData = {}
         chalkboardData[entIndex].eraseData = {}
     end
-    
     
     render.PushRenderTarget(chalkboardRTs[entIndex].rt)
     render.Clear(0, 0, 0, 0)
@@ -108,13 +117,6 @@ function ENT:DrawBoundsDebug()
         pos + up * (-halfHeight) + right * halfWidth,
         pos + up * (-halfHeight) + right * (-halfWidth)
     }
-    
-    -- -- Синяя рамка для отладки
-    -- render.SetColorMaterial()
-    -- render.DrawLine(corners[1], corners[2], Color(0, 0, 255, 255), true)
-    -- render.DrawLine(corners[2], corners[3], Color(0, 0, 255, 255), true)
-    -- render.DrawLine(corners[3], corners[4], Color(0, 0, 255, 255), true)
-    -- render.DrawLine(corners[4], corners[1], Color(0, 0, 255, 255), true)
 end
 
 function ENT:LocalToTextureCoords(localPos)
@@ -219,7 +221,6 @@ function ENT:EraseOnBoard(hitPos, size, isNewLine)
     local entIndex = self:EntIndex()
     if not chalkboardRTs[entIndex] then return end
     
-
     if not chalkboardData[entIndex] then
         chalkboardData[entIndex] = { drawData = {}, eraseData = {} }
     end
@@ -240,12 +241,10 @@ function ENT:EraseOnBoard(hitPos, size, isNewLine)
     local eraseSize = size or 20
     local eraseRadius = eraseSize / 2
     
-
     if isNewLine then
         self.LastErasePos = nil
     end
     
-
     self:EraseAtPosition(currentX, currentY, eraseRadius)
 
     if self.LastErasePos and not isNewLine then
@@ -260,19 +259,15 @@ function ENT:EraseOnBoard(hitPos, size, isNewLine)
                 local t = i / steps
                 local lineX = lastX + (currentX - lastX) * t
                 local lineY = lastY + (currentY - lastY) * t
-                
-
                 self:EraseAtPosition(lineX, lineY, eraseRadius)
             end
         end
     end
     
-
     self.LastErasePos = {x = currentX, y = currentY}
     self:RedrawChalkboard()
 end
 
--- Вспомогательная функция для стирания в конкретной позиции
 function ENT:EraseAtPosition(x, y, radius)
     local entIndex = self:EntIndex()
     if not chalkboardData[entIndex] or not chalkboardData[entIndex].drawData then return end
@@ -287,7 +282,6 @@ function ENT:EraseAtPosition(x, y, radius)
         end
     end
     
-
     for i = #pointsToRemove, 1, -1 do
         table.remove(chalkboardData[entIndex].drawData, pointsToRemove[i])
     end
@@ -304,7 +298,6 @@ function ENT:RedrawChalkboard()
         cam.Start2D()
         render.Clear(0, 0, 0, 0)
         
-
         if chalkboardData[entIndex] and chalkboardData[entIndex].drawData then
             for _, drawPoint in ipairs(chalkboardData[entIndex].drawData) do
                 surface.SetDrawColor(drawPoint.color.r, drawPoint.color.g, drawPoint.color.b, 255)
@@ -332,7 +325,6 @@ function ENT:RedrawChalkboard()
     self:UpdateChalkboardMaterial()
 end
 
-
 function ENT:UpdateChalkboardMaterial()
     local entIndex = self:EntIndex()
     if not chalkboardRTs[entIndex] or not chalkboardRTs[entIndex].mat then return end
@@ -350,6 +342,7 @@ function ENT:Draw()
     self:DrawModel()
     self:DrawChalkboard()
     self:DrawLampGlow()
+    self:DrawProjectedLight()
     self:DrawBoundsDebug()
 end
 
@@ -383,27 +376,53 @@ function ENT:DrawChalkboard()
     render.SetMaterial(mat)
     render.DrawQuad(topLeft, topRight, bottomRight, bottomLeft)
     render.SetBlend(1)
-    
-    -- -- Зеленая рамка для отладки
-    -- render.SetColorMaterial()
-    -- render.DrawLine(topLeft, topRight, Color(0, 255, 0, 255))
-    -- render.DrawLine(topRight, bottomRight, Color(0, 255, 0, 255))
-    -- render.DrawLine(bottomRight, bottomLeft, Color(0, 255, 0, 255))
-    -- render.DrawLine(bottomLeft, topLeft, Color(0, 255, 0, 255))
 end
-
 
 -- СВЕТОВЫЕ ФУНКЦИИ
 function ENT:Think()
     self:UpdateLight()
+    self:UpdateProjectedLight()
     self:NextThink(CurTime() + 0.1)
     return true
+end
+
+function ENT:DrawProjectedLight()
+    if not self:GetLightEnabled() then return end
+    if not self.ProjectedTexture then return end
+    
+    local lightColor = self:GetLightColor()
+    local brightness = self:GetLightBrightness()
+    local distance = self:GetLightDistance()
+
+    local normalizedColor = Vector(
+        lightColor.x / 255,
+        lightColor.y / 255, 
+        lightColor.z / 255
+    )
+    
+
+    local lightPos = self:GetPos() + self:GetForward() * 60
+    local lightAng = self:GetAngles()
+    lightAng:RotateAroundAxis(lightAng:Up(), 180)
+
+    self.ProjectedTexture:SetPos(lightPos)
+    self.ProjectedTexture:SetAngles(lightAng)
+    self.ProjectedTexture:SetColor(Color(
+        normalizedColor.x * 255,
+        normalizedColor.y * 255,
+        normalizedColor.z * 255
+    ))
+    self.ProjectedTexture:SetBrightness(brightness / 10)
+    self.ProjectedTexture:SetFarZ(distance)
+    
+
+    self.ProjectedTexture:Update()
 end
 
 function ENT:UpdateLight()
     if not self:GetLightEnabled() then return end
     
-    local lampLocalPos = Vector(0, 0, 24.5)
+    local lampLocalPos = Vector(0, 0, 22.5)
     local lampWorldPos = self:LocalToWorld(lampLocalPos)
     local forward = self:GetForward()
     local lightPos = lampWorldPos + forward * 15
@@ -418,6 +437,29 @@ function ENT:UpdateLight()
         dlight.b = lightColor.z
         dlight.Brightness = self:GetLightBrightness() * 0.5
         dlight.Size = self:GetLightDistance() * 2
+        dlight.Decay = 1000
+        dlight.DieTime = CurTime() + 1
+    end
+end
+
+function ENT:UpdateProjectedLight()
+    if not self:GetLightEnabled() then return end
+    
+    local lightColor = self:GetLightColor()
+    local brightness = self:GetLightBrightness()
+    local distance = self:GetLightDistance()
+    
+
+    local lightPos = self:GetPos()
+    
+    local dlight = DynamicLight(self:EntIndex() + 1000)
+    if dlight then
+        dlight.Pos = lightPos
+        dlight.r = lightColor.x
+        dlight.g = lightColor.y
+        dlight.b = lightColor.z
+        dlight.Brightness = (brightness / 10) * 0.3
+        dlight.Size = distance*2
         dlight.Decay = 1000
         dlight.DieTime = CurTime() + 1
     end
@@ -474,6 +516,11 @@ function ENT:OnRemove()
     local entIndex = self:EntIndex()
     if chalkboardRTs[entIndex] then
         chalkboardRTs[entIndex] = nil
+    end
+    
+    if self.ProjectedTexture then
+        self.ProjectedTexture:Remove()
+        self.ProjectedTexture = nil
     end
 end
 

@@ -1,8 +1,8 @@
 TOOL.Category = "Drawing Boards"
 TOOL.Name = "#Boards"
+TOOL.Mode = "db"
 TOOL.Command = nil
 TOOL.ConfigName = ""
-
 
 -- Типы досок
 local BoardTypes = {
@@ -29,6 +29,7 @@ local BoardTypes = {
     }
 }
 
+-- Boards
 if CLIENT then
     language.Add("tool.db.name", "Drawing Boards")
     language.Add("tool.db.desc", "Spawn various drawing boards")
@@ -353,19 +354,6 @@ function TOOL.BuildCPanel(CPanel)
         Label = "Reset Settings to Default",
         Command = "db_reset"
     })
-    -- Быстрая очистка досок на всей карте через кнопку
-    CPanel:AddControl("Button", {
-        Label = "Cleanup All Boards",
-        Command = "db_cleanup"
-    })
-    CPanel:ControlHelp("")
-    CPanel:AddControl("Label", {
-        Text = "To completely clear the boards, use these console commands:"
-    })
-    CPanel:ControlHelp("")
-    CPanel:ControlHelp("chalk_clear - clears chalkboards")
-    CPanel:ControlHelp("")
-    CPanel:ControlHelp("marker_clear - clears whiteboards and little whiteboards")
     CPanel:ControlHelp("")
 end
 

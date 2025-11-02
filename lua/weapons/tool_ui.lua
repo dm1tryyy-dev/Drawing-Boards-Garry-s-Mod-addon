@@ -1,6 +1,22 @@
 print("[DB_UI] Loading interface...")
 
 ChalkMarkerUI = ChalkMarkerUI or {}
+ChalkMarkerUI.Keybind = KEY_T
+ChalkMarkerUI.KeybindBlocked = false
+
+if CLIENT then
+    if file.Exists("chalk_marker_keybind.txt", "DATA") then
+        local keyData = file.Read("chalk_marker_keybind.txt", "DATA")
+        if keyData then
+            ChalkMarkerUI.Keybind = tonumber(keyData) or KEY_T
+        else
+            ChalkMarkerUI.Keybind = KEY_T
+        end
+    else
+        ChalkMarkerUI.Keybind = KEY_T
+    end
+end
+
 if SERVER then
     util.AddNetworkString("ChalkMarkerUI_UpdateWeapon")
     util.AddNetworkString("ChalkMarkerUI_UpdateEraseSize")
@@ -626,9 +642,10 @@ end
 -- клиентская часть
 if CLIENT then    
     hook.Add("Think", "ChalkMarkerUI_Main", function()
-        local currentTState = input.IsKeyDown(KEY_T)
-        if currentTState and not ChalkMarkerUI.LastTState then
-
+        if ChalkMarkerUI.KeybindBlocked then return end
+        local currentKeyState = input.IsKeyDown(ChalkMarkerUI.Keybind)
+        if currentKeyState and not ChalkMarkerUI.LastTState then
+            
             local ply = LocalPlayer()
             if not IsValid(ply) then return end
             
@@ -636,15 +653,17 @@ if CLIENT then
             if not IsValid(weapon) then return end
             
             local weaponName = weapon:GetPrintName() or ""
+
             
             if weaponName == "Chalk" or weaponName == "Marker" then
                 if not ChalkMarkerUI.State.IsOpen then
+                    
                     ChalkMarkerUI.OpenMenu(weapon)
                 end
             end
         end
         
-        ChalkMarkerUI.LastTState = currentTState
+        ChalkMarkerUI.LastTState = currentKeyState
     end)
 
     hook.Add("Think", "ChalkMarkerUI_ESC", function()

@@ -3,19 +3,36 @@ include("shared.lua")
 whiteboardRTs = whiteboardRTs or {}
 whiteboardData = whiteboardData or {}
 
--- Кэш для кругов (оптимизация)
-local circleCache = {}
+local math_sqrt = math.sqrt
+local math_max = math.max
+local math_min = math.min
+local math_floor = math.floor
+local math_Clamp = math.Clamp
+local math_cos = math.cos
+local math_sin = math.sin
+local math_pi = math.pi
+
+local circleCache8 = {}
+local circleCache12 = {}
+local circleCache16 = {}
+
 local function GetCachedCircle(radius, segments)
-    local key = radius .. "_" .. segments
-    if not circleCache[key] then
+    local cache
+    if segments == 8 then cache = circleCache8
+    elseif segments == 12 then cache = circleCache12
+    else cache = circleCache16 end
+    
+    local key = radius
+    if not cache[key] then
         local poly = {}
+        local segmentAngle = (2 * math_pi) / segments
         for i = 0, segments do
-            local angle = (i / segments) * math.pi * 2
-            poly[#poly + 1] = {x = math.cos(angle) * radius, y = math.sin(angle) * radius}
+            local angle = i * segmentAngle
+            poly[#poly + 1] = {x = math_cos(angle) * radius, y = math_sin(angle) * radius}
         end
-        circleCache[key] = poly
+        cache[key] = poly
     end
-    return circleCache[key]
+    return cache[key]
 end
 
 function ENT:Initialize()
@@ -23,6 +40,18 @@ function ENT:Initialize()
     self:InitializeWhiteboard()
     self.LastDrawPos = nil
     self.LastErasePos = nil
+    
+    self.immediateDrawBuffer = {}
+    self.persistentDrawBuffer = {}
+    self.immediateEraseBuffer = {}
+    
+    self.lastImmediateRedraw = 0
+    self.lastFullRedraw = 0
+    self.fullRedrawScheduled = false
+    
+    self.immediateRedrawRate = 0.05
+    self.fullRedrawRate = 0.3
+    self.maxPointsPerFrame = 20
 end
 
 function ENT:InitializeWhiteboard()
@@ -52,6 +81,13 @@ function ENT:InitializeWhiteboard()
     
     whiteboardRTs[entIndex].mat = mat
     
+    self.immediateDrawBuffer = self.immediateDrawBuffer or {}
+    self.persistentDrawBuffer = self.persistentDrawBuffer or {}
+    self.immediateEraseBuffer = self.immediateEraseBuffer or {}
+    self.lastImmediateRedraw = self.lastImmediateRedraw or 0
+    self.lastFullRedraw = self.lastFullRedraw or 0
+    self.maxPointsPerFrame = self.maxPointsPerFrame or 20
+    
     render.PushRenderTarget(rt)
     render.Clear(0, 0, 0, 0)
     render.PopRenderTarget()
@@ -75,6 +111,10 @@ function ENT:ClearWhiteboard()
         whiteboardData[entIndex].drawData = {}
         whiteboardData[entIndex].eraseData = {}
     end
+    
+    self.immediateDrawBuffer = {}
+    self.persistentDrawBuffer = {}
+    self.immediateEraseBuffer = {}
     
     render.PushRenderTarget(whiteboardRTs[entIndex].rt)
     render.Clear(0, 0, 0, 0)
@@ -112,8 +152,8 @@ function ENT:LocalToTextureCoords(localPos)
     
     texCoordY = 1 - texCoordY
     
-    texCoordX = math.Clamp(texCoordX, 0, 1)
-    texCoordY = math.Clamp(texCoordY, 0, 1)
+    texCoordX = math_Clamp(texCoordX, 0, 1)
+    texCoordY = math_Clamp(texCoordY, 0, 1)
     
     return texCoordX, texCoordY
 end
@@ -143,7 +183,10 @@ function ENT:DrawOnBoard(hitPos, color, size, isNewLine)
     if not whiteboardData[entIndex].drawData then
         whiteboardData[entIndex].drawData = {}
     end
-    
+
+    if not self.immediateDrawBuffer then self.immediateDrawBuffer = {} end
+    if not self.persistentDrawBuffer then self.persistentDrawBuffer = {} end
+
     local localPos = self:WorldToLocal(hitPos)
     
     if not self:IsPointOnBoard(localPos) then
@@ -159,39 +202,47 @@ function ENT:DrawOnBoard(hitPos, color, size, isNewLine)
     
     local pointSize = size or 8
 
-    table.insert(whiteboardData[entIndex].drawData, {
+    local newPoint = {
         x = currentX,
         y = currentY,
         color = color,
-        size = pointSize,
-        type = "draw"
-    })
+        size = pointSize
+    }
+    
+    table.insert(whiteboardData[entIndex].drawData, newPoint)
+    table.insert(self.persistentDrawBuffer, newPoint)
+    table.insert(self.immediateDrawBuffer, newPoint)
 
     if self.LastDrawPos and not isNewLine then
         local lastX = self.LastDrawPos.x
         local lastY = self.LastDrawPos.y
         
-        local dist = math.sqrt((currentX - lastX)^2 + (currentY - lastY)^2)
+        local dist = math_sqrt((currentX - lastX)^2 + (currentY - lastY)^2)
         
-        if dist > 2 then
-            local steps = math.max(2, math.floor(dist / 4))
+        if dist > 3 then
+            local steps = math_max(2, math_floor(dist / 6))
             for i = 1, steps - 1 do
                 local t = i / steps
                 local lineX = lastX + (currentX - lastX) * t
                 local lineY = lastY + (currentY - lastY) * t
-                table.insert(whiteboardData[entIndex].drawData, {
+                
+                local linePoint = {
                     x = lineX,
                     y = lineY,
                     color = color,
-                    size = pointSize,
-                    type = "draw"
-                })
+                    size = pointSize
+                }
+                
+                table.insert(whiteboardData[entIndex].drawData, linePoint)
+                table.insert(self.persistentDrawBuffer, linePoint)
+                table.insert(self.immediateDrawBuffer, linePoint)
             end
         end
     end
     
     self.LastDrawPos = {x = currentX, y = currentY}
-    self:RedrawWhiteboard()
+    
+    self:ScheduleOptimizedRedraw()
 end
 
 function ENT:EraseOnBoard(hitPos, size, isNewLine)
@@ -199,10 +250,6 @@ function ENT:EraseOnBoard(hitPos, size, isNewLine)
     
     local entIndex = self:EntIndex()
     if not whiteboardRTs[entIndex] then return end
-    
-    if not whiteboardData[entIndex] then
-        whiteboardData[entIndex] = { drawData = {}, eraseData = {} }
-    end
     
     local localPos = self:WorldToLocal(hitPos)
     
@@ -223,102 +270,229 @@ function ENT:EraseOnBoard(hitPos, size, isNewLine)
     if isNewLine then
         self.LastErasePos = nil
     end
+
+    local erasedPoints = self:EraseAtPosition(currentX, currentY, eraseRadius)
     
-    self:EraseAtPosition(currentX, currentY, eraseRadius)
+    if #erasedPoints > 0 then
+        table.insert(self.immediateEraseBuffer, {
+            x = currentX,
+            y = currentY,
+            radius = eraseRadius,
+            erasedPoints = erasedPoints
+        })
+    end
 
     if self.LastErasePos and not isNewLine then
         local lastX = self.LastErasePos.x
         local lastY = self.LastErasePos.y
         
-        local dist = math.sqrt((currentX - lastX)^2 + (currentY - lastY)^2)
+        local dist = math_sqrt((currentX - lastX)^2 + (currentY - lastY)^2)
         
-        if dist > 2 then
-            local steps = math.max(2, math.floor(dist / 4))
+        if dist > 3 then
+            local steps = math_max(2, math_floor(dist / 6))
             for i = 1, steps - 1 do
                 local t = i / steps
                 local lineX = lastX + (currentX - lastX) * t
                 local lineY = lastY + (currentY - lastY) * t
                 
-                self:EraseAtPosition(lineX, lineY, eraseRadius)
+                local lineErased = self:EraseAtPosition(lineX, lineY, eraseRadius)
+                if #lineErased > 0 then
+                    table.insert(self.immediateEraseBuffer, {
+                        x = lineX,
+                        y = lineY,
+                        radius = eraseRadius,
+                        erasedPoints = lineErased
+                    })
+                end
             end
         end
     end
     
     self.LastErasePos = {x = currentX, y = currentY}
-    self:RedrawWhiteboard()
+    
+    self:ScheduleOptimizedRedraw()
 end
 
--- Оптимизированная функция стирания
 function ENT:EraseAtPosition(x, y, radius)
     local entIndex = self:EntIndex()
-    if not whiteboardData[entIndex] or not whiteboardData[entIndex].drawData then return end
+    if not whiteboardData[entIndex] or not whiteboardData[entIndex].drawData then return {} end
     
     local pointsToRemove = {}
+    local erasedPoints = {}
     local radiusSquared = radius * radius
     
     for i, drawPoint in ipairs(whiteboardData[entIndex].drawData) do
         local distSquared = (drawPoint.x - x)^2 + (drawPoint.y - y)^2
         if distSquared <= radiusSquared then
             table.insert(pointsToRemove, i)
+            table.insert(erasedPoints, drawPoint)
         end
     end
     
     for i = #pointsToRemove, 1, -1 do
         table.remove(whiteboardData[entIndex].drawData, pointsToRemove[i])
     end
+    
+    return erasedPoints
 end
 
--- Оптимизированная функция перерисовки с кругами
-function ENT:RedrawWhiteboard()
+function ENT:ScheduleOptimizedRedraw()
+    self.lastImmediateRedraw = self.lastImmediateRedraw or 0
+    self.lastFullRedraw = self.lastFullRedraw or 0
+    self.immediateRedrawRate = self.immediateRedrawRate or 0.05
+    self.fullRedrawRate = self.fullRedrawRate or 0.3
+    
+    local currentTime = CurTime()
+    
+    if currentTime - self.lastImmediateRedraw >= self.immediateRedrawRate then
+        self:SmoothImmediateRedraw()
+        self.lastImmediateRedraw = currentTime
+    end
+    
+    if currentTime - self.lastFullRedraw >= self.fullRedrawRate then
+        self:ScheduleFullRedraw()
+        self.lastFullRedraw = currentTime
+    end
+end
+
+function ENT:SmoothImmediateRedraw()
+    if not self.immediateDrawBuffer then self.immediateDrawBuffer = {} end
+    if not self.immediateEraseBuffer then self.immediateEraseBuffer = {} end
+    
+    if #self.immediateDrawBuffer == 0 and #self.immediateEraseBuffer == 0 then
+        return
+    end
+    
     local entIndex = self:EntIndex()
     if not whiteboardRTs[entIndex] then return end
     
-    -- Ограничиваем частоту перерисовки для экономии FPS
-    if self.NextRedraw and CurTime() < self.NextRedraw then return end
-    self.NextRedraw = CurTime() + 0.05 -- Максимум 20 раз в секунду
-    
-    render.PushRenderTarget(whiteboardRTs[entIndex].rt)
-    render.OverrideAlphaWriteEnable(true, true)
+    self.maxPointsPerFrame = self.maxPointsPerFrame or 20
     
     local success, err = pcall(function()
-        cam.Start2D()
-        render.Clear(0, 0, 0, 0)
+        render.PushRenderTarget(whiteboardRTs[entIndex].rt)
+        render.OverrideAlphaWriteEnable(true, true)
         
-        if whiteboardData[entIndex] and whiteboardData[entIndex].drawData then
-            -- Используем кэшированные круги для оптимизации
-            for _, drawPoint in ipairs(whiteboardData[entIndex].drawData) do
-                surface.SetDrawColor(drawPoint.color.r, drawPoint.color.g, drawPoint.color.b, 255)
-                local radius = drawPoint.size or 8
-                local segments = 16
-                
-                -- Получаем кэшированный круг
-                local circlePoly = GetCachedCircle(radius/2, segments)
-                
-                -- Создаем полигон с правильной позицией
-                local positionedPoly = {}
-                for _, vertex in ipairs(circlePoly) do
-                    positionedPoly[#positionedPoly + 1] = {
-                        x = drawPoint.x + vertex.x,
-                        y = drawPoint.y + vertex.y
-                    }
+        cam.Start2D()
+        
+        if #self.immediateEraseBuffer > 0 then
+            render.Clear(0, 0, 0, 0)
+            
+            if whiteboardData[entIndex] and whiteboardData[entIndex].drawData then
+                for _, point in ipairs(whiteboardData[entIndex].drawData) do
+                    surface.SetDrawColor(point.color.r, point.color.g, point.color.b, 255)
+                    local radius = point.size or 8
+                    self:DrawOptimizedCircle(point.x, point.y, radius/2)
                 end
-                
-                surface.DrawPoly(positionedPoly)
+            end
+            self.immediateEraseBuffer = {}
+        end
+        
+        if #self.immediateDrawBuffer > 0 then
+            local pointsToDraw = math_min(#self.immediateDrawBuffer, self.maxPointsPerFrame)
+            for i = 1, pointsToDraw do
+                local point = self.immediateDrawBuffer[i]
+                surface.SetDrawColor(point.color.r, point.color.g, point.color.b, 255)
+                local radius = point.size or 8
+                self:DrawOptimizedCircle(point.x, point.y, radius/2)
+            end
+            
+            for i = 1, pointsToDraw do
+                table.remove(self.immediateDrawBuffer, 1)
             end
         end
         
         cam.End2D()
+        render.OverrideAlphaWriteEnable(false)
+        render.PopRenderTarget()
     end)
     
-    render.OverrideAlphaWriteEnable(false)
-    render.PopRenderTarget()
-    
     if not success then
-        ErrorNoHalt("RedrawWhiteboard error: " .. tostring(err) .. "\n")
+        pcall(function() cam.End2D() end)
+        pcall(function() render.OverrideAlphaWriteEnable(false) end)
+        pcall(function() render.PopRenderTarget() end)
+        ErrorNoHalt("SmoothImmediateRedraw error: " .. tostring(err) .. "\n")
         return
     end
     
     self:UpdateWhiteboardMaterial()
+end
+
+function ENT:ScheduleFullRedraw()
+    self.fullRedrawScheduled = self.fullRedrawScheduled or false
+    
+    if self.fullRedrawScheduled then return end
+    
+    self.fullRedrawScheduled = true
+    
+    timer.Simple(0.3, function()
+        if IsValid(self) then
+            self:FullRedraw()
+        end
+        self.fullRedrawScheduled = false
+    end)
+end
+
+function ENT:FullRedraw()
+    local entIndex = self:EntIndex()
+    if not whiteboardRTs[entIndex] then return end
+    
+    self.persistentDrawBuffer = {}
+    
+    local success, err = pcall(function()
+        render.PushRenderTarget(whiteboardRTs[entIndex].rt)
+        render.OverrideAlphaWriteEnable(true, true)
+        
+        cam.Start2D()
+        render.Clear(0, 0, 0, 0)
+        
+        if whiteboardData[entIndex] and whiteboardData[entIndex].drawData then
+            for _, point in ipairs(whiteboardData[entIndex].drawData) do
+                surface.SetDrawColor(point.color.r, point.color.g, point.color.b, 255)
+                local radius = point.size or 8
+                self:DrawOptimizedCircle(point.x, point.y, radius/2)
+            end
+        end
+        
+        cam.End2D()
+        render.OverrideAlphaWriteEnable(false)
+        render.PopRenderTarget()
+    end)
+    
+    if not success then
+        pcall(function() cam.End2D() end)
+        pcall(function() render.OverrideAlphaWriteEnable(false) end)
+        pcall(function() render.PopRenderTarget() end)
+        ErrorNoHalt("FullRedraw error: " .. tostring(err) .. "\n")
+        return
+    end
+    
+    self:UpdateWhiteboardMaterial()
+end
+
+function ENT:ForceRedraw()
+    self.immediateDrawBuffer = self.immediateDrawBuffer or {}
+    self.immediateEraseBuffer = self.immediateEraseBuffer or {}
+    self.immediateDrawBuffer = {}
+    self.immediateEraseBuffer = {}
+    self:FullRedraw()
+end
+
+function ENT:DrawOptimizedCircle(x, y, radius)
+    local segments
+    if radius <= 4 then segments = 8
+    elseif radius <= 8 then segments = 12
+    else segments = 16 end
+    
+    local circlePoly = GetCachedCircle(radius, segments)
+    local positionedPoly = {}
+    
+    for _, vertex in ipairs(circlePoly) do
+        positionedPoly[#positionedPoly + 1] = {
+            x = x + vertex.x,
+            y = y + vertex.y
+        }
+    end
+    surface.DrawPoly(positionedPoly)
 end
 
 function ENT:UpdateWhiteboardMaterial()
@@ -366,7 +540,6 @@ function ENT:DrawWhiteboard()
     render.DrawQuad(topLeft, topRight, bottomRight, bottomLeft)
 end
 
--- СВЕТОВЫЕ ФУНКЦИИ (оставлены как в оригинале)
 function ENT:Think()
     self:UpdateLight()
     self:NextThink(CurTime() + 0.1)
@@ -409,16 +582,12 @@ function ENT:DrawLampGlow()
     local baseWidth = 200
     local baseHeight = 16
 
-    -- Сохранка текущих настроек рендера
     render.SuppressEngineLighting(true)
     render.SetColorModulation(1, 1, 1)
-    
-    -- тест глубины чтобы квады не были видны сквозь стены
     render.OverrideDepthEnable(true, false)
     
     render.SetMaterial(self.LampSprite)
 
-    -- QUADS (оставлены как в оригинале)
     render.DrawQuad(
         lampWorldPos + right * (-baseWidth/2) + up * (-baseHeight/2),
         lampWorldPos + right * (baseWidth/2) + up * (-baseHeight/2),
@@ -454,7 +623,6 @@ function ENT:OnRemove()
     end
 end
 
--- Команда для полной очистки досок типа "whiteboard"
 concommand.Add("marker_clear", function(ply)
     local tr = ply:GetEyeTrace()
     local ent = tr.Entity
@@ -463,5 +631,15 @@ concommand.Add("marker_clear", function(ply)
         print("Whiteboard cleared!")
     else
         print("Look at a whiteboard to clear it!")
+    end
+end)
+
+hook.Add("KeyRelease", "WhiteboardForceRedraw", function(ply, key)
+    if key == IN_ATTACK or key == IN_ATTACK2 then
+        local tr = ply:GetEyeTrace()
+        local ent = tr.Entity
+        if IsValid(ent) and (ent:GetClass() == "little_whiteboard" or ent:GetClass() == "whiteboard") then
+            ent:ForceRedraw()
+        end
     end
 end)

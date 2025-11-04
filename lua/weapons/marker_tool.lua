@@ -146,6 +146,12 @@ function SWEP:SyncColorToClient()
 end
 
 function SWEP:Reload()
+
+    local owner = self:GetOwner()
+    if IsValid(owner) and owner:KeyDown(IN_SPEED) then
+        return false
+    end
+    
     -- R - быстрая смена цвета
     local nextColor = ChalkMarkerConfig.GetNextColor("marker", self.CurrentColor)
     
@@ -292,6 +298,18 @@ function SWEP:Think()
         self.WasAttacking2 = false
     end
     
+    if owner:KeyDown(IN_SPEED) and owner:KeyPressed(IN_RELOAD) then
+        local tr = owner:GetEyeTrace()
+        local ent = tr.Entity  
+        if self:GetClass() == "marker_tool" and IsValid(ent) and self:IsSupportedBoard(ent) then
+            if SERVER then
+                RunConsoleCommand("marker_clear")
+            end
+            return
+        end
+    end
+
+
     if SERVER then
         if isAttacking and CurTime() >= self:GetNextPrimaryFire() then
             local tr = owner:GetEyeTrace()
@@ -316,8 +334,7 @@ function SWEP:Think()
 
         if isAttacking2 and CurTime() >= self:GetNextSecondaryFire() then
             local tr = owner:GetEyeTrace()
-            
-            -- Проверка на обе доски
+
             if IsValid(tr.Entity) and self:IsSupportedBoard(tr.Entity) then
 
                 local isNewLine = not self.WasAttacking2
@@ -384,7 +401,7 @@ if CLIENT then
         local size = net.ReadUInt(8)
         local isNewLine = net.ReadBool()
         
-        -- Проверяем методы у любой энтити (не только whiteboard)
+
         if IsValid(whiteboard) and whiteboard.DrawOnBoard then
             whiteboard:DrawOnBoard(hitPos, color, size, isNewLine)
         end
@@ -396,10 +413,121 @@ if CLIENT then
         local size = net.ReadUInt(8)
         local isNewLine = net.ReadBool()
         
-        -- Проверяем методы у любой энтити (не только whiteboard)
+
         if IsValid(whiteboard) and whiteboard.EraseOnBoard then
             whiteboard:EraseOnBoard(hitPos, size, isNewLine)
         end
     end)
+end
 
+
+-- Сообщение с подсказками управления
+if CLIENT then
+    local hintState = {
+        alpha = 0,
+        offset = -300,
+        showTime = 0,
+        hasShown = false
+    }
+
+    function SWEP:DrawHUD()
+        local hints = {
+            "LMB: Draw",
+            "RMB: Erase", 
+            "SHIFT+R: Full Clear (only whiteboard and little whiteboard)",
+            "R: Quick Change Color",
+            "T: Tool Menu (you can assign another key)"
+        }
+        
+
+        local isActive = self:GetOwner() == LocalPlayer() and self:GetOwner():GetActiveWeapon() == self
+        
+        if isActive and not hintState.hasShown then
+
+            hintState.showTime = CurTime()
+            hintState.hasShown = true
+            hintState.alpha = 0
+            hintState.offset = -300
+        end
+        
+        local timeSinceShow = CurTime() - hintState.showTime
+        local shouldShow = isActive and timeSinceShow < 10
+        
+        local targetAlpha = shouldShow and 1 or 0
+        local targetOffset = shouldShow and 20 or -300
+        
+        -- Плавная интерполяция
+        hintState.alpha = Lerp(FrameTime() * 4, hintState.alpha, targetAlpha)
+        hintState.offset = Lerp(FrameTime() * 6, hintState.offset, targetOffset)
+        
+        if hintState.alpha <= 0.01 then return end
+        
+
+        surface.SetFont("HudSelectionText")
+        local maxWidth = 0
+        local maxHeight = 0
+        local padding = 20
+
+        local title = "CONTROLS"
+        local titleWidth = surface.GetTextSize(title)
+        
+        for i, hint in ipairs(hints) do
+            local w, h = surface.GetTextSize(hint)
+            maxWidth = math.max(maxWidth, w)
+            maxHeight = math.max(maxHeight, h)
+        end
+        
+        maxWidth = math.max(maxWidth, titleWidth)
+        local lineHeight = maxHeight + 8
+        local totalWidth = maxWidth + padding * 2
+        local totalHeight = (#hints + 1) * lineHeight + padding * 2
+        
+
+        local x = hintState.offset
+        local y = ScrH() / 2 - totalHeight / 2
+        
+        -- Фон
+        surface.SetDrawColor(0, 0, 0, 200 * hintState.alpha)
+        surface.DrawRect(x, y, totalWidth, totalHeight)
+        
+        -- Толстая рамка
+        local border = 3
+        surface.SetDrawColor(255, 212, 0, 255 * hintState.alpha)
+        surface.DrawRect(x, y, totalWidth, border)
+        surface.DrawRect(x, y + totalHeight - border, totalWidth, border)
+        surface.DrawRect(x, y, border, totalHeight)
+        surface.DrawRect(x + totalWidth - border, y, border, totalHeight)
+        
+        -- Заголовок
+        local titleY = y + padding
+        draw.SimpleText(title, "DermaDefaultBold", x + totalWidth / 2, titleY, 
+                       Color(255, 255, 255, 255 * hintState.alpha), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+        
+        -- Разделительная линия под заголовком
+        local lineY = titleY + lineHeight - 5
+        surface.SetDrawColor(255, 212, 0, 150 * hintState.alpha)
+        surface.DrawRect(x + padding, lineY, totalWidth - padding * 2, 1)
+        
+        -- Подсказки с шрифтом HudSelectionText
+        for i, hint in ipairs(hints) do
+            local textY = y + padding + i * lineHeight
+            draw.SimpleText(hint, "HudSelectionText", x + padding, textY, 
+                           Color(255, 212, 0, 255 * hintState.alpha), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+        end
+    end
+    
+
+    function SWEP:Holster()
+        hintState.hasShown = false
+        hintState.alpha = 0
+        hintState.offset = -300
+        return true
+    end
+    
+
+    function SWEP:OnRemove()
+        hintState.hasShown = false
+        hintState.alpha = 0
+        hintState.offset = -300
+    end
 end

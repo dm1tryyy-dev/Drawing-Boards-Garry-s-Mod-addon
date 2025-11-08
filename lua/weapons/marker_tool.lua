@@ -12,7 +12,7 @@ end
 
 SWEP.Base = "weapon_base"
 SWEP.PrintName = "Marker"
-SWEP.Author = "dmitry_ostanin"
+SWEP.Author = "Err0X1s"
 SWEP.Instructions = "LMB: Draw | RMB: Erase | R: Quick color change | T: Open menu"
 SWEP.Spawnable = true
 SWEP.AdminSpawnable = true

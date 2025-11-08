@@ -1,7 +1,7 @@
 ENT.Type = "anim"
 ENT.Base = "base_gmodentity"
 ENT.PrintName = "Chalkboard"
-ENT.Author = "dmitry_ostanin"
+ENT.Author = "Err0X1s"
 ENT.Category = ""
 ENT.Spawnable = false
 ENT.AdminSpawnable = false

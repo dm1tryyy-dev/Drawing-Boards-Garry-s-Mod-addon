@@ -52,6 +52,22 @@ function ENT:Initialize()
     self.immediateRedrawRate = 0.05
     self.fullRedrawRate = 0.3
     self.maxPointsPerFrame = 20
+    self:ShowLoadingNotification()
+end
+
+function ENT:ShowLoadingNotification()
+    if not IsValid(self) then return end
+    
+    if IsValid(LocalPlayer()) then
+        chat.AddText(Color(255, 255, 0), "[Whiteboard] ", Color(255, 255, 255), "Board rendering is loading... This may take up to 40 seconds (but can load immediately in some cases).")
+        notification.AddLegacy("Whiteboard rendering is loading... This may take up to 40 seconds (but can load immediately in some cases).", NOTIFY_GENERIC, 5)
+    end
+    timer.Simple(20, function()
+        if IsValid(self) and IsValid(LocalPlayer()) then
+            chat.AddText(Color(255, 255, 0), "[Whiteboard] ", Color(255, 255, 255), "Board is still loading... Please wait. (If the board has loaded, ignore the message)")
+            notification.AddLegacy("Whiteboard is still loading... Please wait. (If the board has loaded, ignore the message)", NOTIFY_GENERIC, 5)
+        end
+    end)
 end
 
 function ENT:InitializeWhiteboard()

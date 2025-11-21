@@ -29,6 +29,10 @@ local BoardTypes = {
     }
 }
 
+if SERVER then
+    util.AddNetworkString("Notification")
+end
+
 -- Boards
 if CLIENT then
     language.Add("tool.db.name", "Drawing Boards")
@@ -37,6 +41,15 @@ if CLIENT then
 
     local ghostEntity = nil
     local lastBoardType = ""
+
+    -- Клиентская часть для уведомлений
+    net.Receive("Notification", function()
+        local message = net.ReadString()
+        local notifyType = net.ReadUInt(5)
+        local duration = net.ReadUInt(8)
+        
+        notification.AddLegacy(message, notifyType, duration)
+    end)
 end
 
 -- ConVar
@@ -379,6 +392,13 @@ if SERVER then
         
         if ply:IsValid() then
             ply:ChatPrint("Cleared " .. count .. " boards!")
+            if net.Start then
+                net.Start("Notification")
+                    net.WriteString("Cleared " .. count .. " boards!")
+                    net.WriteUInt(4, 5)
+                    net.WriteUInt(5, 8)
+                net.Send(ply)
+            end
         end
     end
     

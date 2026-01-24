@@ -30,6 +30,37 @@ if not CLIENT then
     return
 end
 
+-- ============ ЗАГРУЗКА КОНФИГУРАЦИИ ============
+
+-- Если config.lua еще не загружен
+if not ChalkMarkerConfig or not ChalkMarkerConfig.Colors then
+    local configPaths = {
+        "config.lua",
+        "chalk_tool/config.lua", 
+        "marker_tool/config.lua",
+        "lua/config.lua"
+    }
+    
+    local configLoaded = false
+    for _, path in ipairs(configPaths) do
+        if file.Exists(path, "LUA") then
+            include(path)
+            configLoaded = true
+            break
+        end
+    end
+
+    if not configLoaded then
+        include("config.lua")
+    end
+end
+
+if not ChalkMarkerConfig or not ChalkMarkerConfig.Colors then
+    print("[DB_UI] ERROR: Configuration not loaded!")
+    return
+end
+
+-- ============ КОНФИГУРАЦИЯ ИНТЕРФЕЙСА (шрифты) ============
 
 -- Создание кастомных шрифтов для интерфейса
 surface.CreateFont("ChalkMarkerUI_TabFont", {
@@ -55,34 +86,6 @@ surface.CreateFont("ChalkMarkerUI_LabelFont", {
     antialias = true
 })
 
--- Если config.lua еще не загружен
-if not ChalkMarkerConfig.Colors then
-    local configPaths = {
-        "config.lua",
-        "chalk_tool/config.lua", 
-        "marker_tool/config.lua",
-        "lua/config.lua"
-    }
-    
-    local configLoaded = false
-    for _, path in ipairs(configPaths) do
-        if file.Exists(path, "LUA") then
-            include(path)
-            configLoaded = true
-            break
-        end
-    end
-
-    if not configLoaded then
-        include("config.lua")
-    end
-end
-
-if not ChalkMarkerConfig.Colors then
-    return
-end
-
--- Конфигурация интерфейса
 ChalkMarkerUI.Config = {
     BlurIntensity = 8,
     BackgroundAlpha = 200,
@@ -91,7 +94,8 @@ ChalkMarkerUI.Config = {
     BackgroundColor = Color(30, 35, 45, 200),
 }
 
--- Состояние интерфейса
+-- ============ СОСТОЯНИЕ ИНТЕРФЕЙСА ============
+
 ChalkMarkerUI.State = {
     IsOpen = false,
     CurrentWeapon = nil,
@@ -99,22 +103,24 @@ ChalkMarkerUI.State = {
     ActiveTab = "color"
 }
 
--- Данные для интерфейса
+-- ============ ДАННЫЕ ДЛЯ ИНТЕРФЕЙСА ============
+
 ChalkMarkerUI.Data = {
     chalk = {
         name = "Chalk",
         colors = ChalkMarkerConfig.GetColorsForUI("chalk"),
-        sizes = ChalkMarkerConfig.GetSizesForUI("chalk", "draw")
+        sizes = ChalkMarkerConfig.GetSizesForUI("chalk", "draw"),
+        erase_sizes = ChalkMarkerConfig.GetSizesForUI("chalk", "erase")
     },
     marker = {
         name = "Marker", 
         colors = ChalkMarkerConfig.GetColorsForUI("marker"),
-        sizes = ChalkMarkerConfig.GetSizesForUI("marker", "draw")
+        sizes = ChalkMarkerConfig.GetSizesForUI("marker", "draw"),
+        erase_sizes = ChalkMarkerConfig.GetSizesForUI("marker", "erase")
     }
 }
 
--- Переменная для отслеживания состояния клавиши T
-ChalkMarkerUI.LastTState = false
+-- ============ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ============
 
 -- функция размытия
 function ChalkMarkerUI.DrawBlur(panel, layers, density, alpha)
@@ -154,7 +160,8 @@ function ChalkMarkerUI.CreateBlurBackground()
     return blurPanel
 end
 
--- главное окно
+-- ============ ОСНОВНОЕ ОКНО ============
+
 function ChalkMarkerUI.CreateMainFrame()
     local frame = vgui.Create("DFrame")
     frame:SetSize(500, 600)
@@ -210,7 +217,8 @@ function ChalkMarkerUI.CreateMainFrame()
     return frame
 end
 
--- вкладки
+-- ============ ВКЛАДКИ ============
+
 function ChalkMarkerUI.CreateTabs(parent)
     local tabContainer = vgui.Create("DPanel", parent)
     tabContainer:SetSize(460, 40)
@@ -259,7 +267,8 @@ function ChalkMarkerUI.CreateTabs(parent)
     return tabContainer
 end
 
--- контент для вкладки цвета
+-- ============ ВКЛАДКА ЦВЕТА ============
+
 function ChalkMarkerUI.CreateColorTab(parent)
     local scroll = vgui.Create("DScrollPanel", parent)
     scroll:SetSize(460, 400)
@@ -284,7 +293,15 @@ function ChalkMarkerUI.CreateColorTab(parent)
         colorBtn:SetText("")
         
         colorBtn.Paint = function(self, w, h)
-            local isSelected = weapon.CurrentColor == colorData.name
+            -- Получаем текущий цвет
+            local currentColor
+            if weapon.GetPlayerColor then
+                currentColor = weapon:GetPlayerColor()
+            else
+                currentColor = weapon.CurrentColor or (ChalkMarkerUI.State.WeaponType == "chalk" and "white" or "black")
+            end
+            
+            local isSelected = currentColor == colorData.name
             local isHovered = self:IsHovered()
             
             if isSelected then
@@ -312,36 +329,59 @@ function ChalkMarkerUI.CreateColorTab(parent)
         end
         
         colorBtn.DoClick = function()
-            local colorDataForTool = ChalkMarkerConfig.GetColorData(ChalkMarkerUI.State.WeaponType, colorData.name)
+            local weapon = ChalkMarkerUI.State.CurrentWeapon
+            local colorName = colorData.name
             
-            weapon.CurrentColor = colorData.name
-            
-            if ChalkMarkerUI.State.WeaponType == "chalk" then
-                if weapon.SetChalkColor then
-                    weapon:SetChalkColor(colorData.name)
-                end
+            -- Получаем текущий цвет для сравнения
+            local currentColor
+            if weapon.GetPlayerColor then
+                currentColor = weapon:GetPlayerColor()
             else
-                if weapon.SetMarkerColor then
-                    weapon:SetMarkerColor(colorData.name)
+                currentColor = weapon.CurrentColor or (ChalkMarkerUI.State.WeaponType == "chalk" and "white" or "black")
+            end
+            
+            -- Если цвет уже выбран, не делаем ничего
+            if currentColor == colorName then return end
+            
+            -- Устанавливаем цвет
+            if weapon.SetPlayerColor then
+                weapon:SetPlayerColor(colorName)
+            else
+                -- Совместимость со старой версией
+                weapon.CurrentColor = colorName
+                if ChalkMarkerUI.State.WeaponType == "chalk" and weapon.SetChalkColor then
+                    weapon:SetChalkColor(colorName)
+                elseif ChalkMarkerUI.State.WeaponType == "marker" and weapon.SetMarkerColor then
+                    weapon:SetMarkerColor(colorName)
                 end
             end
             
-            local currentSize = weapon.CurrentSize or "medium"
-            local sizeValue = weapon.CurrentSizeValue or ChalkMarkerConfig.GetSizeValue(ChalkMarkerUI.State.WeaponType, "draw", currentSize)
+            -- Получаем текущий размер
+            local sizeValue = 7
+            if weapon.GetDrawSizeValue then
+                sizeValue = weapon:GetDrawSizeValue()
+            elseif weapon.CurrentSizeValue then
+                sizeValue = weapon.CurrentSizeValue
+            elseif weapon.GetPlayerSize then
+                local sizeName = weapon:GetPlayerSize()
+                sizeValue = ChalkMarkerConfig.GetSizeValue(ChalkMarkerUI.State.WeaponType, "draw", sizeName)
+            end
             
+            -- Синхронизируем с сервером
             net.Start("ChalkMarkerUI_UpdateWeapon")
-                net.WriteString(colorData.name)
+                net.WriteString(colorName)
                 net.WriteUInt(sizeValue, 8)
             net.SendToServer()
             
-            updateCurrentColorDisplay(colorData.name)
+            updateCurrentColorDisplay(colorName)
         end
     end
     
     return scroll
 end
 
--- контент для вкладки размера
+-- ============ ВКЛАДКА РАЗМЕРА ============
+
 function ChalkMarkerUI.CreateSizeTab(parent)
     local panel = vgui.Create("DPanel", parent)
     panel:SetSize(460, 400)
@@ -359,8 +399,25 @@ function ChalkMarkerUI.CreateSizeTab(parent)
     end
     
     local weapon = ChalkMarkerUI.State.CurrentWeapon
-    local currentDrawSize = weapon.CurrentSizeValue or ChalkMarkerConfig.GetSizeValue(ChalkMarkerUI.State.WeaponType, "draw", "medium")
-    local currentEraseSize = weapon.CurrentEraseSizeValue or ChalkMarkerConfig.GetSizeValue(ChalkMarkerUI.State.WeaponType, "erase", "medium")
+    
+    -- Получаем текущие значения
+    local currentDrawSizeValue, currentEraseSizeValue
+    
+    if weapon.GetDrawSizeValue then
+        currentDrawSizeValue = weapon:GetDrawSizeValue()
+    elseif weapon.CurrentSizeValue then
+        currentDrawSizeValue = weapon.CurrentSizeValue
+    else
+        currentDrawSizeValue = ChalkMarkerConfig.GetSizeValue(ChalkMarkerUI.State.WeaponType, "draw", "medium")
+    end
+    
+    if weapon.GetEraseSizeValue then
+        currentEraseSizeValue = weapon:GetEraseSizeValue()
+    elseif weapon.CurrentEraseSizeValue then
+        currentEraseSizeValue = weapon.CurrentEraseSizeValue
+    else
+        currentEraseSizeValue = ChalkMarkerConfig.GetSizeValue(ChalkMarkerUI.State.WeaponType, "erase", "medium")
+    end
     
     -- Ползунок для размера рисования
     local drawLabel = vgui.Create("DLabel", panel)
@@ -377,25 +434,42 @@ function ChalkMarkerUI.CreateSizeTab(parent)
     drawSlider:SetMin(5)
     drawSlider:SetMax(10)
     drawSlider:SetDecimals(0)
-    drawSlider:SetValue(currentDrawSize)
+    drawSlider:SetValue(currentDrawSizeValue)
 
     drawSlider.Label:SetFont("ChalkMarkerUI_LabelFont")
     drawSlider.Label:SetTextColor(ChalkMarkerUI.Config.TextColor)
-
     
     drawSlider.OnValueChanged = function(self, value)
         local intValue = math.Round(value)
-        weapon.CurrentSizeValue = intValue
+        local weapon = ChalkMarkerUI.State.CurrentWeapon
         
+        -- Определяем название размера по значению
         local sizes = ChalkMarkerConfig.GetSizesForUI(ChalkMarkerUI.State.WeaponType, "draw")
+        local sizeName = "medium"
         for _, sizeData in ipairs(sizes) do
             if sizeData.value == intValue then
-                weapon.CurrentSize = sizeData.name
+                sizeName = sizeData.name
                 break
             end
         end
+        
+        -- Устанавливаем размер
+        if weapon.SetPlayerSize then
+            weapon:SetPlayerSize(sizeName)
+        else
+            weapon.CurrentSizeValue = intValue
+            weapon.CurrentSize = sizeName
+        end
 
-        local colorName = weapon.CurrentColor or "white"
+        -- Получаем текущий цвет
+        local colorName
+        if weapon.GetPlayerColor then
+            colorName = weapon:GetPlayerColor()
+        else
+            colorName = weapon.CurrentColor or (ChalkMarkerUI.State.WeaponType == "chalk" and "white" or "black")
+        end
+        
+        -- Синхронизируем с сервером
         net.Start("ChalkMarkerUI_UpdateWeapon")
             net.WriteString(colorName)
             net.WriteUInt(intValue, 8)
@@ -417,24 +491,34 @@ function ChalkMarkerUI.CreateSizeTab(parent)
     eraseSlider:SetMin(10)
     eraseSlider:SetMax(20)
     eraseSlider:SetDecimals(0)
-    eraseSlider:SetValue(currentEraseSize)
+    eraseSlider:SetValue(currentEraseSizeValue)
 
     eraseSlider.Label:SetFont("ChalkMarkerUI_LabelFont")
     eraseSlider.Label:SetTextColor(ChalkMarkerUI.Config.TextColor)
-
     
     eraseSlider.OnValueChanged = function(self, value)
         local intValue = math.Round(value)
-        weapon.CurrentEraseSizeValue = intValue
+        local weapon = ChalkMarkerUI.State.CurrentWeapon
         
+        -- Определяем название размера по значению
         local sizes = ChalkMarkerConfig.GetSizesForUI(ChalkMarkerUI.State.WeaponType, "erase")
+        local sizeName = "medium"
         for _, sizeData in ipairs(sizes) do
             if sizeData.value == intValue then
-                weapon.CurrentEraseSize = sizeData.name
+                sizeName = sizeData.name
                 break
             end
         end
         
+        -- Устанавливаем размер стирания
+        if weapon.SetPlayerEraseSize then
+            weapon:SetPlayerEraseSize(sizeName)
+        else
+            weapon.CurrentEraseSizeValue = intValue
+            weapon.CurrentEraseSize = sizeName
+        end
+        
+        -- Синхронизируем с сервером
         net.Start("ChalkMarkerUI_UpdateEraseSize")
             net.WriteUInt(intValue, 8)
         net.SendToServer()
@@ -459,26 +543,51 @@ function ChalkMarkerUI.CreateSizeTab(parent)
             "Yes", function()
                 local weapon = ChalkMarkerUI.State.CurrentWeapon
                 if IsValid(weapon) then
-                    weapon.CurrentColor = ChalkMarkerUI.State.WeaponType == "chalk" and "white" or "black"
-                    weapon.CurrentSize = "medium"
-                    weapon.CurrentSizeValue = 6
-                    weapon.CurrentEraseSize = "medium"
-                    weapon.CurrentEraseSizeValue = 12
+                    local defaultColor = ChalkMarkerUI.State.WeaponType == "chalk" and "white" or "black"
                     
-
+                    -- Сбрасываем цвет
+                    if weapon.SetPlayerColor then
+                        weapon:SetPlayerColor(defaultColor)
+                    else
+                        weapon.CurrentColor = defaultColor
+                    end
+                    
+                    -- Сбрасываем размер рисования
+                    if weapon.SetPlayerSize then
+                        weapon:SetPlayerSize("medium")
+                    else
+                        weapon.CurrentSize = "medium"
+                        weapon.CurrentSizeValue = 6
+                    end
+                    
+                    -- Сбрасываем размер стирания
+                    if weapon.SetPlayerEraseSize then
+                        weapon:SetPlayerEraseSize("medium")
+                    else
+                        weapon.CurrentEraseSize = "medium"
+                        weapon.CurrentEraseSizeValue = 12
+                    end
+                    
+                    -- Обновляем UI
                     drawSlider:SetValue(6)
                     eraseSlider:SetValue(12)
                     
+                    -- Обновляем визуал оружия
                     if ChalkMarkerUI.State.WeaponType == "chalk" and weapon.SetChalkColor then
-                        weapon:SetChalkColor("white")
+                        weapon:SetChalkColor(defaultColor)
                     elseif ChalkMarkerUI.State.WeaponType == "marker" and weapon.SetMarkerColor then
-                        weapon:SetMarkerColor("black")
+                        weapon:SetMarkerColor(defaultColor)
                     end
                     
-
+                    -- Синхронизируем с сервером
                     net.Start("ChalkMarkerUI_UpdateWeapon")
-                        net.WriteString(weapon.CurrentColor)
-                        net.WriteUInt(weapon.CurrentSizeValue or 6, 8)
+                        net.WriteString(defaultColor)
+                        net.WriteUInt(6, 8)
+                    net.SendToServer()
+                    
+                    -- Также синхронизируем размер стирания
+                    net.Start("ChalkMarkerUI_UpdateEraseSize")
+                        net.WriteUInt(12, 8)
                     net.SendToServer()
                 end
             end,
@@ -489,7 +598,8 @@ function ChalkMarkerUI.CreateSizeTab(parent)
     return panel
 end
 
--- Обновление контента интерфейса
+-- ============ ОБНОВЛЕНИЕ КОНТЕНТА ============
+
 function ChalkMarkerUI.UpdateContent()
     if not ChalkMarkerUI.MainFrame or not ChalkMarkerUI.MainFrame:IsValid() then 
         return 
@@ -511,7 +621,8 @@ function ChalkMarkerUI.UpdateContent()
     end
 end
 
--- Открытие меню
+-- ============ ОТКРЫТИЕ МЕНЮ ============
+
 function ChalkMarkerUI.OpenMenu(weapon)
     if ChalkMarkerUI.State.IsOpen then 
         return 
@@ -521,7 +632,7 @@ function ChalkMarkerUI.OpenMenu(weapon)
         return
     end
     
-    
+    -- Защита от слишком частого открытия
     if ChalkMarkerUI.OpenCooldown and CurTime() - ChalkMarkerUI.OpenCooldown < 0.5 then
         return
     end
@@ -529,6 +640,7 @@ function ChalkMarkerUI.OpenMenu(weapon)
     
     local weaponName = weapon:GetPrintName() or ""
     
+    -- Определяем тип оружия
     if weaponName == "Chalk" then
         ChalkMarkerUI.State.WeaponType = "chalk"
     elseif weaponName == "Marker" then
@@ -541,21 +653,64 @@ function ChalkMarkerUI.OpenMenu(weapon)
     ChalkMarkerUI.State.IsOpen = true
     ChalkMarkerUI.State.ActiveTab = "color"
     
-    if not weapon.CurrentColor then
-        weapon.CurrentColor = ChalkMarkerUI.State.WeaponType == "chalk" and "white" or "black"
-    end
-    if not weapon.CurrentSize then
-        weapon.CurrentSize = "medium"
-        weapon.CurrentSizeValue = ChalkMarkerConfig.GetSizeValue(ChalkMarkerUI.State.WeaponType, "draw", "medium")
-    end
-    if not weapon.CurrentEraseSize then
-        weapon.CurrentEraseSize = "medium"
-        weapon.CurrentEraseSizeValue = ChalkMarkerConfig.GetSizeValue(ChalkMarkerUI.State.WeaponType, "erase", "medium")
+    -- Получаем текущие значения из оружия
+    local currentColor, currentSizeValue, currentEraseSizeValue
+    
+    if weapon.GetPlayerColor then
+        currentColor = weapon:GetPlayerColor()
+    else
+        currentColor = weapon.CurrentColor or (ChalkMarkerUI.State.WeaponType == "chalk" and "white" or "black")
     end
     
+    if weapon.GetDrawSizeValue then
+        currentSizeValue = weapon:GetDrawSizeValue()
+    elseif weapon.CurrentSizeValue then
+        currentSizeValue = weapon.CurrentSizeValue
+    else
+        currentSizeValue = ChalkMarkerConfig.GetSizeValue(ChalkMarkerUI.State.WeaponType, "draw", "medium")
+    end
+    
+    if weapon.GetEraseSizeValue then
+        currentEraseSizeValue = weapon:GetEraseSizeValue()
+    elseif weapon.CurrentEraseSizeValue then
+        currentEraseSizeValue = weapon.CurrentEraseSizeValue
+    else
+        currentEraseSizeValue = ChalkMarkerConfig.GetSizeValue(ChalkMarkerUI.State.WeaponType, "erase", "medium")
+    end
+    
+    -- Устанавливаем локальные переменные для совместимости
+    if not weapon.CurrentColor then weapon.CurrentColor = currentColor end
+    if not weapon.CurrentSizeValue then weapon.CurrentSizeValue = currentSizeValue end
+    if not weapon.CurrentEraseSizeValue then weapon.CurrentEraseSizeValue = currentEraseSizeValue end
+    
+    -- Получаем названия размеров
+    local currentSize = "medium"
+    local currentEraseSize = "medium"
+    
+    if weapon.GetPlayerSize then
+        currentSize = weapon:GetPlayerSize()
+    elseif weapon.CurrentSize then
+        currentSize = weapon.CurrentSize
+    else
+        currentSize = "medium"
+    end
+    
+    if weapon.GetPlayerEraseSize then
+        currentEraseSize = weapon:GetPlayerEraseSize()
+    elseif weapon.CurrentEraseSize then
+        currentEraseSize = weapon.CurrentEraseSize
+    else
+        currentEraseSize = "medium"
+    end
+    
+    weapon.CurrentSize = currentSize
+    weapon.CurrentEraseSize = currentEraseSize
+    
+    -- Скрываем оружие и включаем курсор
     weapon:SetNoDraw(true)
     gui.EnableScreenClicker(true)
     
+    -- Создаем интерфейс
     ChalkMarkerUI.BlurBackground = ChalkMarkerUI.CreateBlurBackground()
     if not IsValid(ChalkMarkerUI.BlurBackground) then
         ChalkMarkerUI.State.IsOpen = false
@@ -578,47 +733,70 @@ function ChalkMarkerUI.OpenMenu(weapon)
     ChalkMarkerUI.UpdateContent()
 end
 
--- Закрытие меню
+-- ============ ЗАКРЫТИЕ МЕНЮ ============
+
 function ChalkMarkerUI.CloseMenu()
     if not ChalkMarkerUI.State.IsOpen then 
         return 
     end
     
+    -- Защита от слишком частого закрытия
     if ChalkMarkerUI.CloseCooldown and CurTime() - ChalkMarkerUI.CloseCooldown < 0.5 then
         return
     end
     
+    -- Синхронизируем последние изменения с сервером
     if IsValid(ChalkMarkerUI.State.CurrentWeapon) then
         local weapon = ChalkMarkerUI.State.CurrentWeapon
-        local colorName = weapon.CurrentColor or (ChalkMarkerUI.State.WeaponType == "chalk" and "white" or "black")
-        local sizeValue = weapon.CurrentSizeValue or ChalkMarkerConfig.GetSizeValue(ChalkMarkerUI.State.WeaponType, "draw", "medium")
         
+        -- Получаем текущий цвет
+        local colorName
+        if weapon.GetPlayerColor then
+            colorName = weapon:GetPlayerColor()
+        else
+            colorName = weapon.CurrentColor or (ChalkMarkerUI.State.WeaponType == "chalk" and "white" or "black")
+        end
+        
+        -- Получаем текущий размер
+        local sizeValue
+        if weapon.GetDrawSizeValue then
+            sizeValue = weapon:GetDrawSizeValue()
+        elseif weapon.CurrentSizeValue then
+            sizeValue = weapon.CurrentSizeValue
+        else
+            sizeValue = ChalkMarkerConfig.GetSizeValue(ChalkMarkerUI.State.WeaponType, "draw", "medium")
+        end
+        
+        -- Синхронизируем с сервером
         net.Start("ChalkMarkerUI_UpdateWeapon")
             net.WriteString(colorName)
             net.WriteUInt(sizeValue, 8)
         net.SendToServer()
         
-        local activeWeapon = LocalPlayer():GetActiveWeapon()
-        if IsValid(activeWeapon) then
-            activeWeapon.CurrentColor = colorName
-            activeWeapon.CurrentSize = weapon.CurrentSize
-            activeWeapon.CurrentSizeValue = sizeValue
-            
-            if ChalkMarkerUI.State.WeaponType == "chalk" and activeWeapon.SetChalkColor then
-                activeWeapon:SetChalkColor(colorName)
-            elseif ChalkMarkerUI.State.WeaponType == "marker" and activeWeapon.SetMarkerColor then
-                activeWeapon:SetMarkerColor(colorName)
-            end
+        -- Также синхронизируем размер стирания
+        local eraseSizeValue
+        if weapon.GetEraseSizeValue then
+            eraseSizeValue = weapon:GetEraseSizeValue()
+        elseif weapon.CurrentEraseSizeValue then
+            eraseSizeValue = weapon.CurrentEraseSizeValue
+        else
+            eraseSizeValue = ChalkMarkerConfig.GetSizeValue(ChalkMarkerUI.State.WeaponType, "erase", "medium")
         end
+        
+        net.Start("ChalkMarkerUI_UpdateEraseSize")
+            net.WriteUInt(eraseSizeValue, 8)
+        net.SendToServer()
     end
     
     ChalkMarkerUI.State.IsOpen = false
     
+    -- Показываем оружие и скрываем курсор
     if IsValid(ChalkMarkerUI.State.CurrentWeapon) then
         ChalkMarkerUI.State.CurrentWeapon:SetNoDraw(false)
     end
     gui.EnableScreenClicker(false)
     
+    -- Удаляем интерфейс
     if IsValid(ChalkMarkerUI.MainFrame) then
         ChalkMarkerUI.MainFrame:Remove()
     end
@@ -626,7 +804,11 @@ function ChalkMarkerUI.CloseMenu()
     if IsValid(ChalkMarkerUI.BlurBackground) then
         ChalkMarkerUI.BlurBackground:Remove()
     end
+    
+    ChalkMarkerUI.CloseCooldown = CurTime()
 end
+
+-- ============ ОБНОВЛЕНИЕ ОТОБРАЖЕНИЯ ============
 
 function ChalkMarkerUI.UpdateColorDisplay()
     if not ChalkMarkerUI.State.IsOpen then return end
@@ -639,54 +821,54 @@ function ChalkMarkerUI.UpdateColorDisplay()
     end
 end
 
--- клиентская часть
-if CLIENT then    
-    hook.Add("Think", "ChalkMarkerUI_Main", function()
-        if ChalkMarkerUI.KeybindBlocked then return end
-        local currentKeyState = input.IsKeyDown(ChalkMarkerUI.Keybind)
-        if currentKeyState and not ChalkMarkerUI.LastTState then
-            
-            local ply = LocalPlayer()
-            if not IsValid(ply) then return end
-            
-            local weapon = ply:GetActiveWeapon()
-            if not IsValid(weapon) then return end
-            
-            local weaponName = weapon:GetPrintName() or ""
+-- ============ КЛИЕНТСКИЕ ХУКИ ============
 
-            
-            if weaponName == "Chalk" or weaponName == "Marker" then
-                if not ChalkMarkerUI.State.IsOpen then
-                    
-                    ChalkMarkerUI.OpenMenu(weapon)
-                end
+hook.Add("Think", "ChalkMarkerUI_Main", function()
+    if ChalkMarkerUI.KeybindBlocked then return end
+    local currentKeyState = input.IsKeyDown(ChalkMarkerUI.Keybind)
+    if currentKeyState and not ChalkMarkerUI.LastTState then
+        
+        local ply = LocalPlayer()
+        if not IsValid(ply) then return end
+        
+        local weapon = ply:GetActiveWeapon()
+        if not IsValid(weapon) then return end
+        
+        local weaponName = weapon:GetPrintName() or ""
+        
+        -- Проверяем, поддерживается ли оружие
+        if weaponName == "Chalk" or weaponName == "Marker" then
+            if not ChalkMarkerUI.State.IsOpen then
+                ChalkMarkerUI.OpenMenu(weapon)
             end
         end
-        
-        ChalkMarkerUI.LastTState = currentKeyState
-    end)
+    end
+    
+    ChalkMarkerUI.LastTState = currentKeyState
+end)
 
-    hook.Add("Think", "ChalkMarkerUI_ESC", function()
-        if ChalkMarkerUI.State.IsOpen and input.IsKeyDown(KEY_ESCAPE) then
-            ChalkMarkerUI.CloseMenu()
-        end
-    end)
+hook.Add("Think", "ChalkMarkerUI_ESC", function()
+    if ChalkMarkerUI.State.IsOpen and input.IsKeyDown(KEY_ESCAPE) then
+        ChalkMarkerUI.CloseMenu()
+    end
+end)
 
-    hook.Add("PlayerSwitchWeapon", "ChalkMarkerUI_Switch", function(ply, oldWeapon, newWeapon)
-        if ChalkMarkerUI.State.IsOpen then
-            ChalkMarkerUI.CloseMenu()
-        end
-    end)
+hook.Add("PlayerSwitchWeapon", "ChalkMarkerUI_Switch", function(ply, oldWeapon, newWeapon)
+    if ChalkMarkerUI.State.IsOpen then
+        ChalkMarkerUI.CloseMenu()
+    end
+end)
 
-    hook.Add("PlayerDeath", "ChalkMarkerUI_Death", function(ply)
-        if ChalkMarkerUI.State.IsOpen then
-            ChalkMarkerUI.CloseMenu()
-        end
-    end)
+hook.Add("PlayerDeath", "ChalkMarkerUI_Death", function(ply)
+    if ChalkMarkerUI.State.IsOpen then
+        ChalkMarkerUI.CloseMenu()
+    end
+end)
 
-    hook.Add("Think", "ChalkMarkerUI_ColorUpdate", function()
-        if ChalkMarkerUI.State.IsOpen then
-            ChalkMarkerUI.UpdateColorDisplay()
-        end
-    end)
-end
+hook.Add("Think", "ChalkMarkerUI_ColorUpdate", function()
+    if ChalkMarkerUI.State.IsOpen then
+        ChalkMarkerUI.UpdateColorDisplay()
+    end
+end)
+
+print("[DB_UI] Interface loaded successfully")

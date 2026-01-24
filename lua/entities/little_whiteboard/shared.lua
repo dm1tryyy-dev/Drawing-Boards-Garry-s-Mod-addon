@@ -21,12 +21,11 @@ end
 function ENT:DrawOnBoard(hitPos, color, size)
     if SERVER then
 
-        print(string.format("[SERVER] Draw at %s with color %s", tostring(hitPos), tostring(color)))
     end
 end
 
 function ENT:EraseOnBoard(hitPos, size)
     if SERVER then
-        print(string.format("[SERVER] Erase at %s", tostring(hitPos)))
+
     end
 end

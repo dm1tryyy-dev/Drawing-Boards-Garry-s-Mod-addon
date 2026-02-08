@@ -1,3 +1,9 @@
+include("config.lua")
+
+if CLIENT then
+    include("tool_ui.lua")
+end
+
 if SERVER then
     util.AddNetworkString("MarkerDraw")
     util.AddNetworkString("MarkerErase") 
@@ -5,6 +11,10 @@ if SERVER then
     util.AddNetworkString("ChalkMarkerUI_UpdateWeapon")
     util.AddNetworkString("MarkerSyncColor")
     util.AddNetworkString("MarkerSyncColorIndex")
+    util.AddNetworkString("ChalkMarkerUI_UpdateWeapon")
+    util.AddNetworkString("ChalkMarkerUI_UpdateEraseSize")
+    util.AddNetworkString("ChalkMarkerUI_SyncSize")
+    util.AddNetworkString("ChalkMarkerUI_SyncEraseSize")
 
     -- Обработчик синхронизации цвета
     net.Receive("MarkerSyncColor", function(len, ply)
@@ -97,11 +107,6 @@ if SERVER then
     end)
 end
 
-include("config.lua")
-if CLIENT then
-    include("tool_ui.lua")
-end
-
 SWEP.Base = "weapon_base"
 SWEP.PrintName = "Marker"
 SWEP.Author = "Err0X1s"
@@ -180,18 +185,14 @@ function SWEP:Initialize()
         -- Инициализация из общей конфигурации
         self.CurrentColor = self.CurrentColor or "black"
         self.ColorIndex = 1 -- Инициализация индекса на клиенте
-        self.CurrentSize = "medium"
-        self.CurrentSizeValue = ChalkMarkerConfig.GetSizeValue("marker", "draw", "medium")
-        self.CurrentEraseSize = "medium"
-        self.CurrentEraseSizeValue = ChalkMarkerConfig.GetSizeValue("marker", "erase", "medium")
+        self.CurrentSizeValue = 7  -- Значение по умолчанию
+        self.CurrentEraseSizeValue = 15  -- Значение по умолчанию
 
         -- Устанавливаем начальный цвет
         self:SetMarkerColor(self.CurrentColor)
     else
         self.CurrentColor = nil
-        self.CurrentSize = nil
         self.CurrentSizeValue = nil
-        self.CurrentEraseSize = nil
         self.CurrentEraseSizeValue = nil
     end
 
@@ -345,13 +346,33 @@ function SWEP:SetPlayerEraseSize(sizeName)
 end
 
 function SWEP:GetDrawSizeValue()
-    local sizeName = self:GetPlayerSize()
-    return ChalkMarkerConfig.GetSizeValue("marker", "draw", sizeName)
+    if CLIENT then
+        return self.CurrentSizeValue or 7
+    else
+        local owner = self:GetOwner()
+        if IsValid(owner) then
+            local userid = owner:UserID()
+            if self.PlayerData and self.PlayerData[userid] then
+                return self.PlayerData[userid].sizeValue or 7
+            end
+        end
+        return 7
+    end
 end
 
 function SWEP:GetEraseSizeValue()
-    local sizeName = self:GetPlayerEraseSize()
-    return ChalkMarkerConfig.GetSizeValue("marker", "erase", sizeName)
+    if CLIENT then
+        return self.CurrentEraseSizeValue or 15
+    else
+        local owner = self:GetOwner()
+        if IsValid(owner) then
+            local userid = owner:UserID()
+            if self.PlayerData and self.PlayerData[userid] then
+                return self.PlayerData[userid].eraseSizeValue or 15
+            end
+        end
+        return 15
+    end
 end
 
 function SWEP:SetMarkerColor(colorName)
@@ -417,12 +438,31 @@ function SWEP:Deploy()
     if CLIENT then
         timer.Simple(0.1, function()
             if IsValid(self) then
-                self:SyncColorToServer(self.CurrentColor or "black")
+                self:SyncColorToServer(self.CurrentColor or "white")
+                
+                -- ВАЖНО: Инициализируем переменные размера если они не установлены
+                if not self.CurrentSizeValue then
+                    self.CurrentSizeValue = self:GetDrawSizeValue()
+                end
+                
+                if not self.CurrentEraseSizeValue then
+                    self.CurrentEraseSizeValue = self:GetEraseSizeValue()
+                end
             end
         end)
     end
     
     return true
+end
+
+function SWEP:UpdateSizeFromServer(sizeName, sizeValue)
+    self.CurrentSize = sizeName
+    self.CurrentSizeValue = sizeValue
+end
+
+function SWEP:UpdateEraseSizeFromServer(sizeName, sizeValue)
+    self.CurrentEraseSize = sizeName
+    self.CurrentEraseSizeValue = sizeValue
 end
 
 function SWEP:Reload()
@@ -782,22 +822,68 @@ if CLIENT then
             whiteboard:EraseOnBoard(hitPos, size, isNewLine)
         end
     end)
+
+    net.Receive("ChalkMarkerUI_SyncSize", function()
+        local weapon = net.ReadEntity()
+        local sizeValue = net.ReadUInt(8)
+        
+        if IsValid(weapon) then
+            weapon.CurrentSizeValue = sizeValue
+            --print("[CLIENT] Draw size synced: " .. sizeValue)
+        end
+    end)
+    
+    net.Receive("ChalkMarkerUI_SyncEraseSize", function()
+        local weapon = net.ReadEntity()
+        local sizeValue = net.ReadUInt(8)
+        
+        if IsValid(weapon) then
+            weapon.CurrentEraseSizeValue = sizeValue
+            --print("[CLIENT] Erase size synced: " .. sizeValue)
+        end
+    end)
 end
 
 -- Сообщение с подсказками управления (HUD)
 if CLIENT then
-    local hintState = {
-        alpha = 0,
-        offset = -300,
-        showTime = 0,
-        fadingOut = false,
-        fadeStartTime = 0
-    }
-
+    local hintAlpha = 0
+    local hintOffset = -300
+    local hintStartTime = 0
+    local isShowingHint = false
+    
     function SWEP:DrawHUD()
         local owner = self:GetOwner()
         if not IsValid(owner) or owner ~= LocalPlayer() then return end
         if owner:GetActiveWeapon() ~= self then return end
+        
+        local currentTime = CurTime()
+        
+        -- Начинаем показ подсказки при первом вызове DrawHUD после взятия оружия
+        if not isShowingHint then
+            isShowingHint = true
+            hintStartTime = currentTime
+            hintAlpha = 0
+            hintOffset = -300
+        end
+        
+        local timeSinceShow = currentTime - hintStartTime
+        
+        -- Показываем 10 секунд, затем скрываем 0.5 секунды
+        if timeSinceShow < 10 then
+            -- Анимация появления
+            hintAlpha = math.min(hintAlpha + FrameTime() * 6, 1)
+            hintOffset = math.min(hintOffset + FrameTime() * 600, 20)
+        elseif timeSinceShow < 10.5 then
+            -- Анимация исчезновения
+            local fadeProgress = (timeSinceShow - 10) / 0.5
+            hintOffset = Lerp(fadeProgress, 20, -300)
+            hintAlpha = Lerp(fadeProgress, 1, 0)
+        else
+            -- Подсказка завершена
+            return
+        end
+        
+        if hintAlpha <= 0.01 then return end
         
         local hints = {
             "LMB: Draw",
@@ -806,57 +892,6 @@ if CLIENT then
             "R: Quick Change Color",
             "T: Tool Menu (you can assign another key)"
         }
-        
-        local currentTime = CurTime()
-        
-        -- Инициализация при первом показе
-        if hintState.showTime == 0 then
-            hintState.showTime = currentTime
-            hintState.fadingOut = false
-            hintState.alpha = 0
-            hintState.offset = -300
-        end
-        
-        local timeSinceShow = currentTime - hintState.showTime
-        
-        -- Логика показа/скрытия
-        local targetAlpha, targetOffset
-        
-        if not hintState.fadingOut then
-            -- Показываем первые 10 секунд
-            if timeSinceShow < 10 then
-                targetAlpha = 1
-                targetOffset = 20
-            else
-                -- Начинаем скрывать
-                hintState.fadingOut = true
-                hintState.fadeStartTime = currentTime
-            end
-        end
-        
-        if hintState.fadingOut then
-            -- Скрываем в течение 1 секунды
-            local fadeDuration = 1.0
-            local fadeProgress = math.Clamp((currentTime - hintState.fadeStartTime) / fadeDuration, 0, 1)
-            
-            if fadeProgress < 1 then
-                -- Плавно двигаем влево и уменьшаем прозрачность
-                targetOffset = Lerp(fadeProgress, 20, -300)
-                targetAlpha = Lerp(fadeProgress, 1, 0)
-            else
-                -- Скрытие завершено, сбрасываем состояние
-                hintState.showTime = 0
-                return
-            end
-        end
-        
-        -- Плавная анимация
-        if targetAlpha and targetOffset then
-            hintState.alpha = Lerp(FrameTime() * 6, hintState.alpha, targetAlpha)
-            hintState.offset = Lerp(FrameTime() * 8, hintState.offset, targetOffset)
-        end
-        
-        if hintState.alpha <= 0.01 then return end
         
         surface.SetFont("HudSelectionText")
         local maxWidth = 0
@@ -877,16 +912,16 @@ if CLIENT then
         local totalWidth = maxWidth + padding * 2
         local totalHeight = (#hints + 1) * lineHeight + padding * 2
         
-        local x = hintState.offset
+        local x = hintOffset
         local y = ScrH() / 2 - totalHeight / 2
         
         -- Фон
-        surface.SetDrawColor(0, 0, 0, 200 * hintState.alpha)
+        surface.SetDrawColor(0, 0, 0, 200 * hintAlpha)
         surface.DrawRect(x, y, totalWidth, totalHeight)
         
         -- Толстая рамка
         local border = 3
-        surface.SetDrawColor(255, 212, 0, 255 * hintState.alpha)
+        surface.SetDrawColor(255, 212, 0, 255 * hintAlpha)
         surface.DrawRect(x, y, totalWidth, border)
         surface.DrawRect(x, y + totalHeight - border, totalWidth, border)
         surface.DrawRect(x, y, border, totalHeight)
@@ -895,40 +930,38 @@ if CLIENT then
         -- Заголовок
         local titleY = y + padding
         draw.SimpleText(title, "DermaDefaultBold", x + totalWidth / 2, titleY, 
-                       Color(255, 255, 255, 255 * hintState.alpha), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+                       Color(255, 255, 255, 255 * hintAlpha), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
         
         -- Разделительная линия под заголовком
         local lineY = titleY + lineHeight - 5
-        surface.SetDrawColor(255, 212, 0, 150 * hintState.alpha)
+        surface.SetDrawColor(255, 212, 0, 150 * hintAlpha)
         surface.DrawRect(x + padding, lineY, totalWidth - padding * 2, 1)
         
-        -- Подсказки с шрифтом HudSelectionText
+        -- Подсказки
         for i, hint in ipairs(hints) do
             local textY = y + padding + i * lineHeight
             draw.SimpleText(hint, "HudSelectionText", x + padding, textY, 
-                           Color(255, 212, 0, 255 * hintState.alpha), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                           Color(255, 212, 0, 255 * hintAlpha), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
         end
     end
     
+    -- Сбрасываем флаг при убирании оружия
     function SWEP:Holster()
-        hintState.showTime = 0
-        hintState.fadingOut = false
-        hintState.alpha = 0
-        hintState.offset = -300
+        isShowingHint = false
         return true
     end
     
-    function SWEP:OnRemove()
-        hintState.showTime = 0
-        hintState.fadingOut = false
-        hintState.alpha = 0
-        hintState.offset = -300
-    end
+    -- Также сбрасываем при смерти
+    hook.Add("PlayerDeath", "ResetMarkerHint", function(ply)
+        if ply == LocalPlayer() then
+            isShowingHint = false
+        end
+    end)
     
-    function SWEP:OwnerChanged()
-        hintState.showTime = 0
-        hintState.fadingOut = false
-        hintState.alpha = 0
-        hintState.offset = -300
-    end
+    -- И при спавне
+    hook.Add("PlayerSpawn", "ResetMarkerHintSpawn", function(ply)
+        if ply == LocalPlayer() then
+            isShowingHint = false
+        end
+    end)
 end

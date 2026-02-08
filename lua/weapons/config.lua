@@ -3,8 +3,11 @@ ChalkMarkerConfig = ChalkMarkerConfig or {}
 
 -- ============ СЕРВЕРНАЯ ЧАСТЬ ============
 if SERVER then
-    -- Добавляем новый нетстринг для подтверждения
     util.AddNetworkString("ChalkMarkerUI_ColorConfirmed")
+    util.AddNetworkString("ChalkMarkerUI_UpdateWeapon")
+    util.AddNetworkString("ChalkMarkerUI_UpdateEraseSize")
+    util.AddNetworkString("ChalkMarkerUI_SyncSize")
+    util.AddNetworkString("ChalkMarkerUI_SyncEraseSize")
     
     -- Загрузка конфигурации
     if not ChalkMarkerConfig then
@@ -29,7 +32,6 @@ if SERVER then
         end
     end
 
-    -- Обработка обновления оружия через UI
     net.Receive("ChalkMarkerUI_UpdateWeapon", function(len, ply)
         local colorName = net.ReadString()
         local sizeValue = net.ReadUInt(8)
@@ -44,10 +46,7 @@ if SERVER then
             if weapon.SetPlayerColor then
                 weapon:SetPlayerColor(colorName)
             else
-                -- Совместимость со старой версией
                 weapon.CurrentColor = colorName
-                
-                -- Обновляем визуал оружия
                 if weaponType == "chalk" and weapon.SetChalkColor then
                     weapon:SetChalkColor(colorName)
                 elseif weaponType == "marker" and weapon.SetMarkerColor then
@@ -55,25 +54,20 @@ if SERVER then
                 end
             end
             
-            -- Находим название размера по значению
-            local sizeName = "medium"
-            if ChalkMarkerConfig.Sizes and ChalkMarkerConfig.Sizes[weaponType .. "_draw"] then
-                for name, data in pairs(ChalkMarkerConfig.Sizes[weaponType .. "_draw"]) do
-                    if data.value == sizeValue then
-                        sizeName = name
-                        break
-                    end
-                end
-            end
+            -- Сохраняем только числовое значение
+            local userid = ply:UserID()
+            weapon.PlayerData = weapon.PlayerData or {}
+            weapon.PlayerData[userid] = weapon.PlayerData[userid] or {}
+            weapon.PlayerData[userid].sizeValue = sizeValue
             
-            -- Устанавливаем размер
-            if weapon.SetPlayerSize then
-                weapon:SetPlayerSize(sizeName)
-            else
-                -- Совместимость со старой версией
-                weapon.CurrentSize = sizeName
-                weapon.CurrentSizeValue = sizeValue
-            end
+            -- Сохраняем в локальные переменные
+            weapon.CurrentSizeValue = sizeValue
+            
+            -- Синхронизируем размер с клиентом
+            net.Start("ChalkMarkerUI_SyncSize")
+                net.WriteEntity(weapon)
+                net.WriteUInt(sizeValue, 8)
+            net.Send(ply)
             
             -- Синхронизируем цвет с клиентом
             if weaponType == "chalk" then
@@ -88,54 +82,32 @@ if SERVER then
                 net.Send(ply)
             end
             
-            -- Отправляем подтверждение клиенту
-            net.Start("ChalkMarkerUI_ColorConfirmed")
-                net.WriteString(colorName)
-            net.Send(ply)
-            
+            --print("[SERVER] Weapon updated: color=" .. colorName .. ", size=" .. sizeValue)
         end
     end)
 
-    -- Обработка обновления размера стирания
     net.Receive("ChalkMarkerUI_UpdateEraseSize", function(len, ply)
         local eraseSizeValue = net.ReadUInt(8)
         
         local weapon = ply:GetActiveWeapon()
         if IsValid(weapon) and (weapon:GetClass() == "chalk_tool" or weapon:GetClass() == "marker_tool") then
             
-            -- Определяем тип оружия
-            local weaponType = weapon:GetClass() == "chalk_tool" and "chalk" or "marker"
+            -- Сохраняем на сервере
+            local userid = ply:UserID()
+            weapon.PlayerData = weapon.PlayerData or {}
+            weapon.PlayerData[userid] = weapon.PlayerData[userid] or {}
+            weapon.PlayerData[userid].eraseSizeValue = eraseSizeValue
             
-            -- Находим название размера по значению
-            local eraseSizeName = "medium"
-            if ChalkMarkerConfig.Sizes and ChalkMarkerConfig.Sizes[weaponType .. "_erase"] then
-                for name, data in pairs(ChalkMarkerConfig.Sizes[weaponType .. "_erase"]) do
-                    if data.value == eraseSizeValue then
-                        eraseSizeName = name
-                        break
-                    end
-                end
-            end
+            -- Сохраняем в локальные переменные
+            weapon.CurrentEraseSizeValue = eraseSizeValue
             
-            -- Устанавливаем размер стирания
-            if weapon.SetPlayerEraseSize then
-                weapon:SetPlayerEraseSize(eraseSizeName)
-            else
-                -- Совместимость со старой версией
-                weapon.CurrentEraseSizeValue = eraseSizeValue
-                weapon.CurrentEraseSize = eraseSizeName
-            end
+            -- Синхронизируем с клиентом
+            net.Start("ChalkMarkerUI_SyncEraseSize")
+                net.WriteEntity(weapon)
+                net.WriteUInt(eraseSizeValue, 8)
+            net.Send(ply)
             
-        end
-    end)
-    
-    -- Команда для просмотра всех настроек игроков на сервере (только для админов)
-    concommand.Add("server_debug_tools", function(ply)
-        if not IsValid(ply) or ply:IsAdmin() then
-            -- Оставляем эту команду для админов, но убираем автоматический вывод
-            ply:ChatPrint("Use this command only when debugging is needed")
-        else
-            ply:ChatPrint("You need to be admin to use this command")
+            --print("[SERVER] Erase size updated to: " .. eraseSizeValue)
         end
     end)
 end
@@ -152,23 +124,20 @@ if CLIENT then
         ChalkMarkerUI.LastConfirmationTime = CurTime()
     end)
     
-    -- Команда для проверки синхронизации (оставляем для отладки, но убираем авто-вывод)
-    concommand.Add("debug_tool_sync", function()
-        local ply = LocalPlayer()
-        local weapon = ply:GetActiveWeapon()
+    -- -- Команда для проверки синхронизации
+    -- concommand.Add("debug_tool_sync", function()
+    --     local ply = LocalPlayer()
+    --     local weapon = ply:GetActiveWeapon()
         
-        if IsValid(weapon) and (weapon:GetClass() == "chalk_tool" or weapon:GetClass() == "marker_tool") then
-            ply:ChatPrint("Tool sync check - see console for details")
-            -- Вывод в консоль только по запросу через команду
-        else
-            ply:ChatPrint("You need to hold a chalk or marker tool")
-        end
-    end)
-    
-    -- Команда для проверки всех игроков на клиенте (оставляем для отладки)
-    concommand.Add("debug_all_players_tools", function()
-        -- Пустая команда, можно использовать при необходимости
-    end)
+    --     if IsValid(weapon) and (weapon:GetClass() == "chalk_tool" or weapon:GetClass() == "marker_tool") then
+    --         ply:ChatPrint("Tool sync check - see console for details")
+    --         print("[DEBUG] Current draw size value:", weapon.CurrentSizeValue)
+    --         print("[DEBUG] Current erase size value:", weapon.CurrentEraseSizeValue)
+    --     else
+    --         ply:ChatPrint("You need to hold a chalk or marker tool")
+    --     end
+    -- end)
+
 end
 
 -- ============ КОНФИГУРАЦИЯ ЦВЕТОВ ============
@@ -288,34 +257,20 @@ ChalkMarkerConfig.Colors = {
     }
 }
 
--- ============ КОНФИГУРАЦИЯ РАЗМЕРОВ ============
-ChalkMarkerConfig.Sizes = {
-    -- Размеры для рисования мелом
-    chalk_draw = {
-        small = {name = "small", display = "Маленький", value = 5},
-        medium = {name = "medium", display = "Средний", value = 7},
-        large = {name = "large", display = "Большой", value = 10}
+-- ============ ДИНАМИЧЕСКИЕ РАЗМЕРЫ ============
+ChalkMarkerConfig.DynamicSizes = {
+    -- Минимальные и максимальные значения для ползунков
+    chalk = {
+        draw_min = 5,   -- Минимальный размер рисования для мела
+        draw_max = 10,  -- Максимальный размер рисования для мела
+        erase_min = 10,  -- Минимальный размер стирания для мела
+        erase_max = 20  -- Максимальный размер стирания для мела
     },
-    
-    -- Размеры для стирания мелом
-    chalk_erase = {
-        small = {name = "small", display = "Маленький", value = 10},
-        medium = {name = "medium", display = "Средний", value = 15},
-        large = {name = "large", display = "Большой", value = 20}
-    },
-    
-    -- Размеры для рисования маркером
-    marker_draw = {
-        small = {name = "small", display = "Тонкий", value = 5},
-        medium = {name = "medium", display = "Средний", value = 7},
-        large = {name = "large", display = "Толстый", value = 10}
-    },
-
-    -- Размеры для стирания маркером
-    marker_erase = {
-        small = {name = "small", display = "Маленький", value = 10},
-        medium = {name = "medium", display = "Средний", value = 15},
-        large = {name = "large", display = "Большой", value = 20}
+    marker = {
+        draw_min = 7,   -- Минимальный размер рисования для маркера
+        draw_max = 15,  -- Максимальный размер рисования для маркера
+        erase_min = 10,  -- Минимальный размер стирания для маркера
+        erase_max = 20  -- Максимальный размер стирания для маркера
     }
 }
 
@@ -323,14 +278,6 @@ ChalkMarkerConfig.Sizes = {
 ChalkMarkerConfig.ColorOrder = {
     chalk = {"white", "yellow", "orange", "pink", "blue", "green"},
     marker = {"black", "red", "blue", "green", "yellow", "orange", "cyan", "purple", "pink", "brown"}
-}
-
--- ============ ПОРЯДОК СМЕНЫ РАЗМЕРОВ ============
-ChalkMarkerConfig.SizeOrder = {
-    chalk_draw = {"small", "medium", "large"},
-    chalk_erase = {"small", "medium", "large"},
-    marker_draw = {"small", "medium", "large"},
-    marker_erase = {"small", "medium", "large"}
 }
 
 -- ============ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ============
@@ -347,17 +294,6 @@ function ChalkMarkerConfig.GetColorData(weaponType, colorName)
     else
         return ChalkMarkerConfig.Colors.marker.black
     end
-end
-
--- Получить данные размера
-function ChalkMarkerConfig.GetSizeData(weaponType, action, sizeName)
-    local sizeKey = weaponType .. "_" .. action
-    if ChalkMarkerConfig.Sizes and ChalkMarkerConfig.Sizes[sizeKey] and ChalkMarkerConfig.Sizes[sizeKey][sizeName] then
-        return ChalkMarkerConfig.Sizes[sizeKey][sizeName]
-    end
-
-    -- Возвращаем размер по умолчанию
-    return ChalkMarkerConfig.Sizes[sizeKey] and ChalkMarkerConfig.Sizes[sizeKey].medium or {name = "medium", display = "Средний", value = 7}
 end
 
 -- Получить список цветов для интерфейса
@@ -392,46 +328,42 @@ function ChalkMarkerConfig.GetColorsForUI(weaponType)
     return colors
 end
 
--- Получение списка размеров для интерфейса
-function ChalkMarkerConfig.GetSizesForUI(weaponType, action)
-    local sizes = {}
-    local sizeKey = weaponType .. "_" .. action
-    
-    if ChalkMarkerConfig.Sizes and ChalkMarkerConfig.Sizes[sizeKey] then
-        for name, data in pairs(ChalkMarkerConfig.Sizes[sizeKey]) do
-            table.insert(sizes, {
-                name = data.name,
-                display = data.display,
-                value = data.value
-            })
+-- Получить минимальные и максимальные значения для размеров
+function ChalkMarkerConfig.GetMinMaxSizes(weaponType, action)
+    if ChalkMarkerConfig.DynamicSizes and ChalkMarkerConfig.DynamicSizes[weaponType] then
+        if action == "draw" then
+            return ChalkMarkerConfig.DynamicSizes[weaponType].draw_min, 
+                   ChalkMarkerConfig.DynamicSizes[weaponType].draw_max
+        elseif action == "erase" then
+            return ChalkMarkerConfig.DynamicSizes[weaponType].erase_min,
+                   ChalkMarkerConfig.DynamicSizes[weaponType].erase_max
         end
     end
     
-    return sizes
+    -- Значения по умолчанию
+    if action == "draw" then
+        return 1, 20
+    else
+        return 5, 40
+    end
 end
 
--- Получение данных цвета для инструмента
+-- Получить данные цвета для инструмента
 function ChalkMarkerConfig.GetColorForTool(weaponType, colorName)
     local data = ChalkMarkerConfig.GetColorData(weaponType, colorName)
     return data and data.tool_color or Vector(1, 1, 1)
 end
 
--- Получение текстуры для маркера
+-- Получить текстуру для маркера
 function ChalkMarkerConfig.GetMarkerTexture(colorName)
     local data = ChalkMarkerConfig.GetColorData("marker", colorName)
     return data and data.texture or "models/tools_materials/marker/colors/marker_base_texture"
 end
 
--- Получение цвета для рисования на доске
+-- Получить цвета для рисования на доске
 function ChalkMarkerConfig.GetDrawColor(weaponType, colorName)
     local data = ChalkMarkerConfig.GetColorData(weaponType, colorName)
     return data and data.color or (weaponType == "chalk" and Color(240, 240, 230) or Color(0, 0, 0))
-end
-
--- Получение значения размера
-function ChalkMarkerConfig.GetSizeValue(weaponType, action, sizeName)
-    local data = ChalkMarkerConfig.GetSizeData(weaponType, action, sizeName)
-    return data and data.value or 7
 end
 
 -- Получение следующего цвета в порядке смены
@@ -455,26 +387,64 @@ function ChalkMarkerConfig.GetNextColor(weaponType, currentColor)
     return order[nextIndex]
 end
 
--- Получение следующего размера в порядке смены
-function ChalkMarkerConfig.GetNextSize(weaponType, action, currentSize)
-    local sizeKey = weaponType .. "_" .. action
-    if not ChalkMarkerConfig.SizeOrder or not ChalkMarkerConfig.SizeOrder[sizeKey] then 
-        return currentSize 
-    end
-    
-    local order = ChalkMarkerConfig.SizeOrder[sizeKey]
-    if #order == 0 then return currentSize end
-    
-    local currentIndex = 1
-    for i, sizeName in ipairs(order) do
-        if sizeName == currentSize then
-            currentIndex = i
-            break
+-- Добавляем эту функцию в конец config.lua:
+if CLIENT then
+    -- Функция для принудительного обновления слайдеров
+    function ChalkMarkerConfig.UpdateSizeSliders(weaponType, drawValue, eraseValue)
+        if not ChalkMarkerUI or not ChalkMarkerUI.State.IsOpen then return end
+        
+        local weapon = ChalkMarkerUI.State.CurrentWeapon
+        if not IsValid(weapon) then return end
+        
+        -- Обновляем значения в оружии
+        weapon.CurrentSizeValue = drawValue
+        weapon.CurrentEraseSizeValue = eraseValue
+        
+        -- Если открыта вкладка размера, обновляем слайдеры
+        if ChalkMarkerUI.State.ActiveTab == "size" and ChalkMarkerUI.ContentPanel then
+            -- Ищем слайдеры в контенте
+            for _, child in ipairs(ChalkMarkerUI.ContentPanel:GetChildren()) do
+                if child:GetClassName() == "DNumSlider" then
+                    local text = child.Label and child.Label:GetText() or ""
+                    if string.find(text, "Draw") then
+                        child:SetValue(drawValue)
+                        if child.TextArea then
+                            child.TextArea:SetValue(tostring(drawValue))
+                        end
+                    elseif string.find(text, "Erase") then
+                        child:SetValue(eraseValue)
+                        if child.TextArea then
+                            child.TextArea:SetValue(tostring(eraseValue))
+                        end
+                    end
+                end
+            end
         end
     end
     
-    local nextIndex = (currentIndex % #order) + 1
-    return order[nextIndex]
+    -- Отладочная команда для тестирования
+    -- concommand.Add("test_slider", function()
+    --     local ply = LocalPlayer()
+    --     local weapon = ply:GetActiveWeapon()
+        
+    --     if IsValid(weapon) and (weapon:GetClass() == "chalk_tool" or weapon:GetClass() == "marker_tool") then
+    --         local weaponType = weapon:GetClass() == "chalk_tool" and "chalk" or "marker"
+            
+    --         -- Тестовые значения
+    --         local testDraw = 5
+    --         local testErase = 10
+            
+    --         print("[TEST] Setting draw size to:", testDraw)
+    --         print("[TEST] Setting erase size to:", testErase)
+            
+    --         weapon.CurrentSizeValue = testDraw
+    --         weapon.CurrentEraseSizeValue = testErase
+            
+    --         ChalkMarkerConfig.UpdateSizeSliders(weaponType, testDraw, testErase)
+            
+    --         ply:ChatPrint("Test values set: Draw=" .. testDraw .. ", Erase=" .. testErase)
+    --     end
+    -- end)
 end
 
 print("ChalkMarker: Configuration loaded")

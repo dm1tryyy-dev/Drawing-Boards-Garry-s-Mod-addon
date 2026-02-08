@@ -5,6 +5,51 @@ ChalkMarkerUI.Keybind = KEY_T
 ChalkMarkerUI.KeybindBlocked = false
 
 if CLIENT then
+    -- Обработчики синхронизации размеров
+    net.Receive("ChalkMarkerUI_SyncSize", function()
+        local weapon = net.ReadEntity()
+        local sizeName = net.ReadString()
+        local sizeValue = net.ReadUInt(8)
+        
+        if IsValid(weapon) then
+            -- Обновляем на клиенте
+            if weapon.SetPlayerSize then
+                weapon:SetPlayerSize(sizeName)
+            else
+                weapon.CurrentSize = sizeName
+                weapon.CurrentSizeValue = sizeValue
+            end
+            
+            -- Обновляем UI если он открыт
+            if ChalkMarkerUI.State.IsOpen and IsValid(ChalkMarkerUI.State.CurrentWeapon) and 
+               ChalkMarkerUI.State.CurrentWeapon == weapon then
+                ChalkMarkerUI.UpdateContent()
+            end
+        end
+    end)
+    
+    net.Receive("ChalkMarkerUI_SyncEraseSize", function()
+        local weapon = net.ReadEntity()
+        local sizeName = net.ReadString()
+        local sizeValue = net.ReadUInt(8)
+        
+        if IsValid(weapon) then
+            -- Обновляем на клиенте
+            if weapon.SetPlayerEraseSize then
+                weapon:SetPlayerEraseSize(sizeName)
+            else
+                weapon.CurrentEraseSize = sizeName
+                weapon.CurrentEraseSizeValue = sizeValue
+            end
+            
+            -- Обновляем UI если он открыт
+            if ChalkMarkerUI.State.IsOpen and IsValid(ChalkMarkerUI.State.CurrentWeapon) and 
+               ChalkMarkerUI.State.CurrentWeapon == weapon then
+                ChalkMarkerUI.UpdateContent()
+            end
+        end
+    end)
+
     if file.Exists("chalk_marker_keybind.txt", "DATA") then
         local keyData = file.Read("chalk_marker_keybind.txt", "DATA")
         if keyData then
@@ -380,8 +425,9 @@ function ChalkMarkerUI.CreateColorTab(parent)
     return scroll
 end
 
--- ============ ВКЛАДКА РАЗМЕРА ============
+-- ============ ВКЛАДКА РАЗМЕРА ================
 
+-- В функции CreateSizeTab заменяем код слайдеров:
 function ChalkMarkerUI.CreateSizeTab(parent)
     local panel = vgui.Create("DPanel", parent)
     panel:SetSize(460, 400)
@@ -399,27 +445,41 @@ function ChalkMarkerUI.CreateSizeTab(parent)
     end
     
     local weapon = ChalkMarkerUI.State.CurrentWeapon
+    if not IsValid(weapon) then return panel end
+    
+    -- Определяем тип оружия
+    local weaponType = ChalkMarkerUI.State.WeaponType
     
     -- Получаем текущие значения
     local currentDrawSizeValue, currentEraseSizeValue
     
-    if weapon.GetDrawSizeValue then
-        currentDrawSizeValue = weapon:GetDrawSizeValue()
-    elseif weapon.CurrentSizeValue then
+    -- Для размера рисования
+    if weapon.CurrentSizeValue then
         currentDrawSizeValue = weapon.CurrentSizeValue
+    elseif weapon.GetDrawSizeValue then
+        currentDrawSizeValue = weapon:GetDrawSizeValue()
     else
-        currentDrawSizeValue = ChalkMarkerConfig.GetSizeValue(ChalkMarkerUI.State.WeaponType, "draw", "medium")
+        currentDrawSizeValue = 7 -- значение по умолчанию
     end
     
-    if weapon.GetEraseSizeValue then
-        currentEraseSizeValue = weapon:GetEraseSizeValue()
-    elseif weapon.CurrentEraseSizeValue then
+    -- Для размера стирания
+    if weapon.CurrentEraseSizeValue then
         currentEraseSizeValue = weapon.CurrentEraseSizeValue
+    elseif weapon.GetEraseSizeValue then
+        currentEraseSizeValue = weapon:GetEraseSizeValue()
     else
-        currentEraseSizeValue = ChalkMarkerConfig.GetSizeValue(ChalkMarkerUI.State.WeaponType, "erase", "medium")
+        currentEraseSizeValue = 15 -- значение по умолчанию
     end
     
-    -- Ползунок для размера рисования
+    -- Получаем минимальные и максимальные значения
+    local drawMin, drawMax = ChalkMarkerConfig.GetMinMaxSizes(weaponType, "draw")
+    local eraseMin, eraseMax = ChalkMarkerConfig.GetMinMaxSizes(weaponType, "erase")
+    
+    -- Ограничиваем значения
+    currentDrawSizeValue = math.Clamp(currentDrawSizeValue, drawMin, drawMax)
+    currentEraseSizeValue = math.Clamp(currentEraseSizeValue, eraseMin, eraseMax)
+    
+    -- ====== РАЗМЕР РИСОВАНИЯ ======
     local drawLabel = vgui.Create("DLabel", panel)
     drawLabel:SetPos(30, 86)
     drawLabel:SetText("Draw size:")
@@ -431,42 +491,43 @@ function ChalkMarkerUI.CreateSizeTab(parent)
     drawSlider:SetPos(20, 80)
     drawSlider:SetSize(420, 40)
     drawSlider:SetText("")
-    drawSlider:SetMin(5)
-    drawSlider:SetMax(10)
+    drawSlider:SetMin(drawMin)
+    drawSlider:SetMax(drawMax)
     drawSlider:SetDecimals(0)
     drawSlider:SetValue(currentDrawSizeValue)
+    drawSlider:SetDark(true)
 
-    drawSlider.Label:SetFont("ChalkMarkerUI_LabelFont")
-    drawSlider.Label:SetTextColor(ChalkMarkerUI.Config.TextColor)
+    -- Простая настройка цвета текста
+    if drawSlider.Label then
+        drawSlider.Label:SetTextColor(Color(200, 200, 200))
+    end
+    
+    if drawSlider.TextArea then
+        drawSlider.TextArea:SetTextColor(Color(200, 200, 200))
+        drawSlider.TextArea:SetNumeric(true)
+        drawSlider.TextArea:SetValue(tostring(currentDrawSizeValue))
+        drawSlider.TextArea:SetEditable(true)
+    end
+    
+    local lastDrawValue = currentDrawSizeValue
     
     drawSlider.OnValueChanged = function(self, value)
         local intValue = math.Round(value)
-        local weapon = ChalkMarkerUI.State.CurrentWeapon
         
-        -- Определяем название размера по значению
-        local sizes = ChalkMarkerConfig.GetSizesForUI(ChalkMarkerUI.State.WeaponType, "draw")
-        local sizeName = "medium"
-        for _, sizeData in ipairs(sizes) do
-            if sizeData.value == intValue then
-                sizeName = sizeData.name
-                break
-            end
+        -- Обновляем TextArea
+        if self.TextArea then
+            self.TextArea:SetValue(tostring(intValue))
         end
         
-        -- Устанавливаем размер
-        if weapon.SetPlayerSize then
-            weapon:SetPlayerSize(sizeName)
-        else
-            weapon.CurrentSizeValue = intValue
-            weapon.CurrentSize = sizeName
-        end
-
+        -- Сохраняем в оружии
+        weapon.CurrentSizeValue = intValue
+        
         -- Получаем текущий цвет
         local colorName
         if weapon.GetPlayerColor then
             colorName = weapon:GetPlayerColor()
         else
-            colorName = weapon.CurrentColor or (ChalkMarkerUI.State.WeaponType == "chalk" and "white" or "black")
+            colorName = weapon.CurrentColor or (weaponType == "chalk" and "white" or "black")
         end
         
         -- Синхронизируем с сервером
@@ -474,9 +535,11 @@ function ChalkMarkerUI.CreateSizeTab(parent)
             net.WriteString(colorName)
             net.WriteUInt(intValue, 8)
         net.SendToServer()
+        
+        lastDrawValue = intValue
     end
     
-    -- Ползунок для размера стирания
+    -- ====== РАЗМЕР СТИРАНИЯ ======
     local eraseLabel = vgui.Create("DLabel", panel)
     eraseLabel:SetPos(30, 167)
     eraseLabel:SetText("Erase size:")
@@ -488,43 +551,41 @@ function ChalkMarkerUI.CreateSizeTab(parent)
     eraseSlider:SetPos(20, 160)
     eraseSlider:SetSize(420, 40)
     eraseSlider:SetText("")
-    eraseSlider:SetMin(10)
-    eraseSlider:SetMax(20)
+    eraseSlider:SetMin(eraseMin)
+    eraseSlider:SetMax(eraseMax)
     eraseSlider:SetDecimals(0)
     eraseSlider:SetValue(currentEraseSizeValue)
+    eraseSlider:SetDark(true)
 
-    eraseSlider.Label:SetFont("ChalkMarkerUI_LabelFont")
-    eraseSlider.Label:SetTextColor(ChalkMarkerUI.Config.TextColor)
+    if eraseSlider.TextArea then
+        eraseSlider.TextArea:SetTextColor(Color(200, 200, 200))
+        eraseSlider.TextArea:SetNumeric(true)
+        eraseSlider.TextArea:SetValue(tostring(currentEraseSizeValue))
+        eraseSlider.TextArea:SetEditable(true)
+    end
+    
+    local lastEraseValue = currentEraseSizeValue
     
     eraseSlider.OnValueChanged = function(self, value)
         local intValue = math.Round(value)
-        local weapon = ChalkMarkerUI.State.CurrentWeapon
         
-        -- Определяем название размера по значению
-        local sizes = ChalkMarkerConfig.GetSizesForUI(ChalkMarkerUI.State.WeaponType, "erase")
-        local sizeName = "medium"
-        for _, sizeData in ipairs(sizes) do
-            if sizeData.value == intValue then
-                sizeName = sizeData.name
-                break
-            end
+        -- Обновляем TextArea
+        if self.TextArea then
+            self.TextArea:SetValue(tostring(intValue))
         end
         
-        -- Устанавливаем размер стирания
-        if weapon.SetPlayerEraseSize then
-            weapon:SetPlayerEraseSize(sizeName)
-        else
-            weapon.CurrentEraseSizeValue = intValue
-            weapon.CurrentEraseSize = sizeName
-        end
+        -- Сохраняем в оружии
+        weapon.CurrentEraseSizeValue = intValue
         
         -- Синхронизируем с сервером
         net.Start("ChalkMarkerUI_UpdateEraseSize")
             net.WriteUInt(intValue, 8)
         net.SendToServer()
+        
+        lastEraseValue = intValue
     end
     
-    -- Кнопка сброса настроек
+    -- ====== КНОПКА СБРОСА ======
     local resetBtn = vgui.Create("DButton", panel)
     resetBtn:SetSize(200, 40)
     resetBtn:SetPos(130, 350)
@@ -538,57 +599,58 @@ function ChalkMarkerUI.CreateSizeTab(parent)
             draw.RoundedBox(8, 0, 0, w, h, Color(80, 80, 80, 100))
         end
     end
+    
     resetBtn.DoClick = function()
         Derma_Query("Reset all tool settings?", "Confirmation",
             "Yes", function()
-                local weapon = ChalkMarkerUI.State.CurrentWeapon
-                if IsValid(weapon) then
-                    local defaultColor = ChalkMarkerUI.State.WeaponType == "chalk" and "white" or "black"
-                    
-                    -- Сбрасываем цвет
-                    if weapon.SetPlayerColor then
-                        weapon:SetPlayerColor(defaultColor)
-                    else
-                        weapon.CurrentColor = defaultColor
-                    end
-                    
-                    -- Сбрасываем размер рисования
-                    if weapon.SetPlayerSize then
-                        weapon:SetPlayerSize("medium")
-                    else
-                        weapon.CurrentSize = "medium"
-                        weapon.CurrentSizeValue = 6
-                    end
-                    
-                    -- Сбрасываем размер стирания
-                    if weapon.SetPlayerEraseSize then
-                        weapon:SetPlayerEraseSize("medium")
-                    else
-                        weapon.CurrentEraseSize = "medium"
-                        weapon.CurrentEraseSizeValue = 12
-                    end
-                    
-                    -- Обновляем UI
-                    drawSlider:SetValue(6)
-                    eraseSlider:SetValue(12)
-                    
-                    -- Обновляем визуал оружия
-                    if ChalkMarkerUI.State.WeaponType == "chalk" and weapon.SetChalkColor then
-                        weapon:SetChalkColor(defaultColor)
-                    elseif ChalkMarkerUI.State.WeaponType == "marker" and weapon.SetMarkerColor then
-                        weapon:SetMarkerColor(defaultColor)
-                    end
-                    
-                    -- Синхронизируем с сервером
-                    net.Start("ChalkMarkerUI_UpdateWeapon")
-                        net.WriteString(defaultColor)
-                        net.WriteUInt(6, 8)
-                    net.SendToServer()
-                    
-                    -- Также синхронизируем размер стирания
-                    net.Start("ChalkMarkerUI_UpdateEraseSize")
-                        net.WriteUInt(12, 8)
-                    net.SendToServer()
+                local defaultColor = weaponType == "chalk" and "white" or "black"
+                local defaultDrawValue = 7
+                local defaultEraseValue = 15
+                
+                -- Сбрасываем значения
+                weapon.CurrentSizeValue = defaultDrawValue
+                weapon.CurrentEraseSizeValue = defaultEraseValue
+                
+                -- Обновляем слайдеры
+                drawSlider:SetValue(defaultDrawValue)
+                if drawSlider.TextArea then
+                    drawSlider.TextArea:SetValue(tostring(defaultDrawValue))
+                end
+                lastDrawValue = defaultDrawValue
+                
+                eraseSlider:SetValue(defaultEraseValue)
+                if eraseSlider.TextArea then
+                    eraseSlider.TextArea:SetValue(tostring(defaultEraseValue))
+                end
+                lastEraseValue = defaultEraseValue
+                
+                -- Сбрасываем цвет
+                if weapon.SetPlayerColor then
+                    weapon:SetPlayerColor(defaultColor)
+                else
+                    weapon.CurrentColor = defaultColor
+                end
+                
+                -- Обновляем визуал оружия
+                if weaponType == "chalk" and weapon.SetChalkColor then
+                    weapon:SetChalkColor(defaultColor)
+                elseif weaponType == "marker" and weapon.SetMarkerColor then
+                    weapon:SetMarkerColor(defaultColor)
+                end
+                
+                -- Синхронизируем с сервером
+                net.Start("ChalkMarkerUI_UpdateWeapon")
+                    net.WriteString(defaultColor)
+                    net.WriteUInt(defaultDrawValue, 8)
+                net.SendToServer()
+                
+                net.Start("ChalkMarkerUI_UpdateEraseSize")
+                    net.WriteUInt(defaultEraseValue, 8)
+                net.SendToServer()
+                
+                -- Обновляем интерфейс
+                if IsValid(ChalkMarkerUI.ContentPanel) then
+                    ChalkMarkerUI.ContentPanel:InvalidateLayout()
                 end
             end,
             "No", function() end
@@ -653,58 +715,43 @@ function ChalkMarkerUI.OpenMenu(weapon)
     ChalkMarkerUI.State.IsOpen = true
     ChalkMarkerUI.State.ActiveTab = "color"
     
-    -- Получаем текущие значения из оружия
-    local currentColor, currentSizeValue, currentEraseSizeValue
+    -- ВАЖНО: Проверяем и инициализируем переменные размера
+    -- Если переменные не установлены, устанавливаем их из текущих значений
     
-    if weapon.GetPlayerColor then
-        currentColor = weapon:GetPlayerColor()
-    else
-        currentColor = weapon.CurrentColor or (ChalkMarkerUI.State.WeaponType == "chalk" and "white" or "black")
+    -- Для цвета
+    if not weapon.CurrentColor then
+        if weapon.GetPlayerColor then
+            weapon.CurrentColor = weapon:GetPlayerColor()
+        else
+            weapon.CurrentColor = ChalkMarkerUI.State.WeaponType == "chalk" and "white" or "black"
+        end
     end
     
-    if weapon.GetDrawSizeValue then
-        currentSizeValue = weapon:GetDrawSizeValue()
-    elseif weapon.CurrentSizeValue then
-        currentSizeValue = weapon.CurrentSizeValue
-    else
-        currentSizeValue = ChalkMarkerConfig.GetSizeValue(ChalkMarkerUI.State.WeaponType, "draw", "medium")
+    -- Для размера рисования
+    if not weapon.CurrentSizeValue then
+        if weapon.GetDrawSizeValue then
+            weapon.CurrentSizeValue = weapon:GetDrawSizeValue()
+        else
+            weapon.CurrentSizeValue = ChalkMarkerConfig.GetSizeValue(ChalkMarkerUI.State.WeaponType, "draw", "medium")
+        end
     end
     
-    if weapon.GetEraseSizeValue then
-        currentEraseSizeValue = weapon:GetEraseSizeValue()
-    elseif weapon.CurrentEraseSizeValue then
-        currentEraseSizeValue = weapon.CurrentEraseSizeValue
-    else
-        currentEraseSizeValue = ChalkMarkerConfig.GetSizeValue(ChalkMarkerUI.State.WeaponType, "erase", "medium")
+    if not weapon.CurrentSize then
+        weapon.CurrentSize = "medium"
     end
     
-    -- Устанавливаем локальные переменные для совместимости
-    if not weapon.CurrentColor then weapon.CurrentColor = currentColor end
-    if not weapon.CurrentSizeValue then weapon.CurrentSizeValue = currentSizeValue end
-    if not weapon.CurrentEraseSizeValue then weapon.CurrentEraseSizeValue = currentEraseSizeValue end
-    
-    -- Получаем названия размеров
-    local currentSize = "medium"
-    local currentEraseSize = "medium"
-    
-    if weapon.GetPlayerSize then
-        currentSize = weapon:GetPlayerSize()
-    elseif weapon.CurrentSize then
-        currentSize = weapon.CurrentSize
-    else
-        currentSize = "medium"
+    -- Для размера стирания
+    if not weapon.CurrentEraseSizeValue then
+        if weapon.GetEraseSizeValue then
+            weapon.CurrentEraseSizeValue = weapon:GetEraseSizeValue()
+        else
+            weapon.CurrentEraseSizeValue = ChalkMarkerConfig.GetSizeValue(ChalkMarkerUI.State.WeaponType, "erase", "medium")
+        end
     end
     
-    if weapon.GetPlayerEraseSize then
-        currentEraseSize = weapon:GetPlayerEraseSize()
-    elseif weapon.CurrentEraseSize then
-        currentEraseSize = weapon.CurrentEraseSize
-    else
-        currentEraseSize = "medium"
+    if not weapon.CurrentEraseSize then
+        weapon.CurrentEraseSize = "medium"
     end
-    
-    weapon.CurrentSize = currentSize
-    weapon.CurrentEraseSize = currentEraseSize
     
     -- Скрываем оружие и включаем курсор
     weapon:SetNoDraw(true)

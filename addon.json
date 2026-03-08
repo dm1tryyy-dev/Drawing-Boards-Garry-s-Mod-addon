@@ -8,6 +8,7 @@
         "*.smd",
         "*.qc",
         ".git",
+        "lua/.git",
         "LICENSE",
         "README.md"
     ]

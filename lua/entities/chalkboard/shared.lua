@@ -6,6 +6,12 @@ ENT.Category = ""
 ENT.Spawnable = false
 ENT.AdminSpawnable = false
 ENT.RenderGroup = RENDERGROUP_OPAQUE
+DEFINE_BASECLASS("base_gmodentity")
+
+cleanup.Register("chalkboards")
+if SERVER then
+    CreateConVar("sbox_maxchalkboards", 3, {FCVAR_NOTIFY, FCVAR_REPLICATED, FCVAR_ARCHIVE, FCVAR_PROTECTED})
+end
 
 -- Сеттеры для световых свойств
 function ENT:SetupDataTables()
@@ -22,8 +28,6 @@ function ENT:SetupDataTables()
 		self:SetLightDistance(200.0)
 	end
 end
-
-ENT = ENT or {}
 
 function ENT:GetChalkboardBounds()
     -- Серверная версия

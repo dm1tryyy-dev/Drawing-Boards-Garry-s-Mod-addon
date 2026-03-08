@@ -11,21 +11,24 @@ local BoardTypes = {
         class = "chalkboard",
         static = true,
         has_light = true,
-        wall_offset = 1.0
+        wall_offset = 1.0,
+        limit_name = "chalkboards"
     },
     ["whiteboard"] = {
         model = "models/boards/whiteboard/whiteboard.mdl",
         class = "whiteboard",
         static = true,
         has_light = true,
-        wall_offset = 1.0
+        wall_offset = 1.0,
+        limit_name = "whiteboards"
     },
     ["little whiteboard"] = {
         model = "models/boards/little_whiteboard/little_whiteboard.mdl",
         class = "little_whiteboard",
         static = false,
         has_light = false,
-        floor_offset = 5
+        floor_offset = 5,
+        limit_name = "little_whiteboards"
     }
 }
 
@@ -195,10 +198,38 @@ function TOOL:LeftClick(trace)
     
     local ply = self:GetOwner()
     local boardType = self:GetClientInfo("type")
-    local physicsEnabled = self:GetClientNumber("physics") == 1
     local boardData = BoardTypes[boardType]
-    
     if not boardData then return false end
+
+    -- === ДИНАМИЧЕСКИЙ ЛИМИТ ===
+    local isAdmin = ply:IsAdmin()
+    local isSinglePlayer = game.SinglePlayer()
+    
+    -- Для теста на себе замени isAdmin на false
+    local ignoreLimit = isAdmin or isSinglePlayer 
+
+    if not ignoreLimit then
+        local limitName = boardData.limit_name -- Имя лимита
+        local conVarName = "sbox_max" .. limitName -- Полное имя команды
+        
+        local maxAllowed = GetConVar(conVarName):GetInt()
+        
+        -- Считаем только доски ТЕКУЩЕГО класса
+        local currentCount = 0
+        for _, ent in ipairs(ents.FindByClass(boardData.class)) do
+            if ent:GetCreator() == ply or ent.Owner == ply then
+                currentCount = currentCount + 1
+            end
+        end
+
+        if currentCount >= maxAllowed then
+            ply:LimitHit(limitName)
+            ply:SendLua([[chat.AddText(Color(255,200,0), "[Drawing Boards] ", Color(255,100,100),"You have reached the limit: ]] .. maxAllowed .. [[ boards!")]])
+            return false 
+        end
+    end
+    -- ===========================
+
     if not util.IsValidModel(boardData.model) then
         ply:ChatPrint("Error: model not found!")
         return false
@@ -207,6 +238,15 @@ function TOOL:LeftClick(trace)
     local ent = ents.Create(boardData.class)
     if not IsValid(ent) then return false end
     ent:SetModel(boardData.model)
+
+    ent:Spawn()
+    ent:Activate()
+
+    -- СВЯЗЬ ДЛЯ СЧЕТЧИКА
+    ent:SetCreator(ply)
+    ent.Owner = ply
+    ply:AddCount(boardData.limit_name, ent)
+    ply:AddCleanup(boardData.limit_name, ent)
 
     -- Получаем значения с новыми именами ConVar
     local lightEnabled = self:GetClientNumber("light") == 1
@@ -270,6 +310,7 @@ function TOOL:LeftClick(trace)
         end
     end
 
+    
     undo.Create("Drawing Board")
         undo.AddEntity(ent)
         undo.SetPlayer(ply)
@@ -277,6 +318,7 @@ function TOOL:LeftClick(trace)
     
     return true
 end
+
 
 function TOOL:RightClick(trace)
     if CLIENT then return true end

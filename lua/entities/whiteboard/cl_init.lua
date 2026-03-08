@@ -1,119 +1,145 @@
 include("shared.lua")
 
 whiteboardRTs = whiteboardRTs or {}
+local DRAW_DISTANCE = 100
+local MAX_DRAW_DISTANCE_SQ = DRAW_DISTANCE * DRAW_DISTANCE
 
-local math_sqrt = math.sqrt
-local math_max = math.max
-local math_min = math.min
-local math_floor = math.floor
-local math_Clamp = math.Clamp
-local math_cos = math.cos
-local math_sin = math.sin
-local math_pi = math.pi
+local markerMaterial = Material("render/marker_draw_unit")
+markerMaterial:SetFloat("$alpha", 1)
+markerMaterial:SetInt("$translucent", 1)
 
-local circleCache8 = {}
-local circleCache12 = {}
-local circleCache16 = {}
+WhiteboardRTPool = WhiteboardRTPool or {
+    free = {},
+    used = {},
+    size = 3,
+    format = {
+        size = 1024,
+        name = "WhiteboardRT"
+    }
+}
 
-local function GetCachedCircle(radius, segments)
-    local cache
-    if segments == 8 then cache = circleCache8
-    elseif segments == 12 then cache = circleCache12
-    else cache = circleCache16 end
+function WhiteboardRTPool:Initialize()
+    if #self.free > 0 then return end
     
-    local key = radius
-    if not cache[key] then
-        local poly = {}
-        local segmentAngle = (2 * math_pi) / segments
-        for i = 0, segments do
-            local angle = i * segmentAngle
-            poly[#poly + 1] = {x = math_cos(angle) * radius, y = math_sin(angle) * radius}
-        end
-        cache[key] = poly
+    for i = 1, self.size do
+        local rt = GetRenderTarget(self.format.name .. i, self.format.size, self.format.size)
+        local mat = CreateMaterial(self.format.name .. "_mat" .. i, "UnlitGeneric", {
+            ["$basetexture"] = rt:GetName(),
+            ["$vertexcolor"] = 1,
+            ["$vertexalpha"] = 1,
+            ["$model"] = 0,
+            ["$nocull"] = 1,
+            ["$translucent"] = 1,
+            ["$alphatest"] = 1,
+            ["$alpha"] = 1
+        })
+        
+        table.insert(self.free, {
+            rt = rt,
+            mat = mat,
+            index = i,
+            lastUsed = 0
+        })
     end
-    return cache[key]
 end
+
+function WhiteboardRTPool:GetBoardRT(ent)
+    if not IsValid(ent) then return nil end
+    
+    local entIndex = ent:EntIndex()
+    
+    if self.used[entIndex] then
+        return self.used[entIndex]
+    end
+    
+    if #self.free > 0 then
+        local rtData = table.remove(self.free, 1)
+        self.used[entIndex] = rtData
+        rtData.lastUsed = CurTime()
+        return rtData
+    end
+    
+    local oldestTime = CurTime()
+    local oldestEnt = nil
+    local oldestRT = nil
+    
+    for e, rtData in pairs(self.used) do
+        if rtData.lastUsed < oldestTime then
+            oldestTime = rtData.lastUsed
+            oldestEnt = e
+            oldestRT = rtData
+        end
+    end
+    
+    if oldestEnt and oldestRT then
+        self.used[oldestEnt] = nil
+        self.used[entIndex] = oldestRT
+        oldestRT.lastUsed = CurTime()
+        return oldestRT
+    end
+    
+    return nil
+end
+
+function WhiteboardRTPool:ReleaseBoardRT(ent)
+    if not IsValid(ent) then return end
+    
+    local entIndex = ent:EntIndex()
+    if self.used[entIndex] then
+        local rtData = self.used[entIndex]
+        self.used[entIndex] = nil
+        table.insert(self.free, rtData)
+    end
+end
+
+WhiteboardRTPool:Initialize()
 
 function ENT:Initialize()
     self.LampSprite = Material("sprites/light_glow02_add_noz")
-    self:InitializeWhiteboard()
     
-    -- ТАБЛИЦЫ ДЛЯ РАЗДЕЛЕНИЯ ДАННЫХ ИГРОКОВ
-    self.PlayerDrawData = {}     -- Точки каждого игрока {playerID: {points}}
-    self.PlayerColors = {}       -- Цвета каждого игрока {playerID: color}
-    self.PlayerLastDrawPos = {}  -- Последние позиции каждого игрока
-    
-    -- ЕДИНСТВЕННЫЙ БУФЕР ДЛЯ ТОЧЕК
-    self.drawPointsBuffer = {}   -- Все точки для отрисовки
-    
-    -- Настройки частоты
-    self.lastImmediateRedraw = 0
-    self.lastFullRedraw = 0
-    self.fullRedrawScheduled = false
-    self.immediateRedrawRate = 0.05 -- 20 FPS
-    self.fullRedrawRate = 0.3       -- 3.3 FPS
-    
-    self:ShowLoadingNotification()
-end
+    self.canvasSize = 1024
+    self.interpStep = 3
+    self.redrawDelay = 0.05
 
-function ENT:ShowLoadingNotification()
-    if not IsValid(self) then return end
-    
-    if IsValid(LocalPlayer()) then
-        chat.AddText(Color(255, 255, 0), "[Whiteboard] ", Color(255, 255, 255), "Board rendering is loading... This may take up to 40 seconds (but can load immediately in some cases).")
-        notification.AddLegacy("Whiteboard rendering is loading... This may take up to 40 seconds (but can load immediately in some cases).", NOTIFY_GENERIC, 5)
+    local quality = GetConVarNumber("render_qlt")
+    if quality == 1 then
+        self.canvasSize = 512
+        self.interpStep = 4
+        self.redrawDelay = 0.066
+    else
+        self.canvasSize = 1024
+        self.interpStep = 3
+        self.redrawDelay = 0.05
     end
-    timer.Simple(20, function()
-        if IsValid(self) and IsValid(LocalPlayer()) then
-            chat.AddText(Color(255, 255, 0), "[Whiteboard] ", Color(255, 255, 255), "Board is still loading... Please wait. (If the board has loaded, ignore the message)")
-            notification.AddLegacy("Whiteboard is still loading... Please wait. (If the board has loaded, ignore the message)", NOTIFY_GENERIC, 5)
-        end
-    end)
-end
-
-function ENT:InitializeWhiteboard()
-    local entIndex = self:EntIndex()
     
-    if whiteboardRTs[entIndex] then return end
-    
-    whiteboardRTs[entIndex] = {}
-    
-    local rt = GetRenderTarget("WhiteboardRT_" .. entIndex, 1024, 1024)
-    whiteboardRTs[entIndex].rt = rt
-    
-    local mat = CreateMaterial("WhiteboardMaterial_" .. entIndex, "UnlitGeneric", {
-        ["$basetexture"] = rt:GetName(),
-        ["$vertexcolor"] = 1,
-        ["$vertexalpha"] = 1,
-        ["$model"] = 0,
-        ["$nocull"] = 1,
-        ["$translucent"] = 1,
-        ["$alphatest"] = 1,
-        ["$alpha"] = 1
-    })
-    
-    whiteboardRTs[entIndex].mat = mat
-    
-    -- Инициализируем таблицы
     self.PlayerDrawData = {}
     self.PlayerColors = {}
     self.PlayerLastDrawPos = {}
     self.drawPointsBuffer = {}
     
-    render.PushRenderTarget(rt)
+    self:InitializeWhiteboard()
+end
+
+function ENT:InitializeWhiteboard()
+    local rtData = WhiteboardRTPool:GetBoardRT(self)
+    if not rtData then return end
+    
+    local entIndex = self:EntIndex()
+    whiteboardRTs[entIndex] = whiteboardRTs[entIndex] or {}
+    whiteboardRTs[entIndex].rt = rtData.rt
+    whiteboardRTs[entIndex].mat = rtData.mat
+    whiteboardRTs[entIndex].size = self.canvasSize
+    whiteboardRTs[entIndex].poolData = rtData
+    
+    render.PushRenderTarget(rtData.rt)
     render.Clear(0, 0, 0, 0)
     render.PopRenderTarget()
     
     self:UpdateWhiteboardMaterial()
-end
-
-function ENT:ResetLastPosition()
-    -- Обнуляем позиции для всех игроков
-    self.PlayerLastDrawPos = {}
-end
-
-function ENT:ResetLastErasePosition()
-    self.LastErasePos = nil
+    
+    if #self.drawPointsBuffer > 0 then
+        self:DrawPointsOnRT(self.drawPointsBuffer)
+    end
 end
 
 function ENT:GetPlayerID(player)
@@ -125,21 +151,12 @@ function ENT:ClearWhiteboard()
     local entIndex = self:EntIndex()
     if not whiteboardRTs[entIndex] then return end
     
-    -- Очищаем все данные
     self.PlayerDrawData = {}
     self.PlayerColors = {}
     self.PlayerLastDrawPos = {}
     self.drawPointsBuffer = {}
     self.LastErasePos = nil
     
-    -- Очищаем RenderTarget
-    render.PushRenderTarget(whiteboardRTs[entIndex].rt)
-    render.Clear(0, 0, 0, 0)
-    render.PopRenderTarget()
-    
-    self:UpdateWhiteboardMaterial()
-    
-    -- Принудительная перерисовка
     self:ForceRedraw()
 end
 
@@ -148,7 +165,6 @@ function ENT:ClearPlayerDrawings(player)
     
     local playerID = self:GetPlayerID(player)
     
-    -- Создаем новый буфер без точек этого игрока
     local newBuffer = {}
     for _, point in ipairs(self.drawPointsBuffer) do
         if point.playerID ~= playerID then
@@ -156,15 +172,11 @@ function ENT:ClearPlayerDrawings(player)
         end
     end
     
-    -- Обновляем буфер
     self.drawPointsBuffer = newBuffer
-    
-    -- Очищаем данные игрока
     self.PlayerDrawData[playerID] = nil
     self.PlayerColors[playerID] = nil
     self.PlayerLastDrawPos[playerID] = nil
     
-    -- Перерисовываем
     self:ForceRedraw()
 end
 
@@ -195,8 +207,8 @@ function ENT:LocalToTextureCoords(localPos)
     
     texCoordY = 1 - texCoordY
     
-    texCoordX = math_Clamp(texCoordX, 0, 1)
-    texCoordY = math_Clamp(texCoordY, 0, 1)
+    texCoordX = math.Clamp(texCoordX, 0, 1)
+    texCoordY = math.Clamp(texCoordY, 0, 1)
     
     return texCoordX, texCoordY
 end
@@ -211,6 +223,49 @@ function ENT:IsPointOnBoard(localPos)
            localPos.z >= mins.z and localPos.z <= maxs.z
 end
 
+function ENT:GetRTData()
+    return whiteboardRTs[self:EntIndex()]
+end
+
+function ENT:GetDrawMaterial()
+    return markerMaterial
+end
+
+function ENT:UpdateMaterial()
+    self:UpdateWhiteboardMaterial()
+end
+
+function ENT:DrawPointsOnRT(points)
+    local entIndex = self:EntIndex()
+    local rtData = self:GetRTData()
+    if not rtData or not rtData.rt then return end
+    
+    render.PushRenderTarget(rtData.rt)
+    render.OverrideAlphaWriteEnable(true, true)
+    
+    cam.Start2D()
+    
+    local material = self:GetDrawMaterial()
+    surface.SetMaterial(material)
+    
+    for _, point in ipairs(points) do
+        surface.SetDrawColor(point.color.r, point.color.g, point.color.b, 255)
+        local halfSize = point.size / 2
+        surface.DrawTexturedRect(
+            math.Round(point.x - halfSize),
+            math.Round(point.y - halfSize),
+            point.size,
+            point.size
+        )
+    end
+    
+    cam.End2D()
+    render.OverrideAlphaWriteEnable(false)
+    render.PopRenderTarget()
+    
+    self:UpdateMaterial()
+end
+
 function ENT:DrawOnBoard(hitPos, color, size, isNewLine, player)
     if not IsValid(self) then return end
     
@@ -223,82 +278,82 @@ function ENT:DrawOnBoard(hitPos, color, size, isNewLine, player)
     local localPos = self:WorldToLocal(hitPos)
     if not self:IsPointOnBoard(localPos) then return end
     
+    local ply = IsValid(player) and player or LocalPlayer()
+    if not IsValid(ply) then return end
+    if ply:GetPos():DistToSqr(self:GetPos()) > MAX_DRAW_DISTANCE_SQ then
+        return
+    end
+
     local texCoordX, texCoordY = self:LocalToTextureCoords(localPos)
-    local texSizeX, texSizeY = 1024, 1024
-    local currentX = texCoordX * texSizeX
-    local currentY = texCoordY * texSizeY
-    local pointSize = size or 8
     
-    -- Получаем ID игрока
+    local canvasSize = whiteboardRTs[entIndex].size or 1024
+    local scaleFactor = 1024 / canvasSize
+
+    local currentX = texCoordX * canvasSize
+    local currentY = texCoordY * canvasSize
+    local pointSize = (size or 8) * scaleFactor 
+    
     local playerID = self:GetPlayerID(player)
     
-    -- Инициализируем данные для игрока
     if not self.PlayerDrawData[playerID] then
         self.PlayerDrawData[playerID] = {}
     end
     
-    -- Сохраняем цвет игрока
     self.PlayerColors[playerID] = color
 
-    -- Проверяем, нет ли уже такой точки (защита от дублирования)
     local isDuplicate = false
-    local lastPoint = self.PlayerDrawData[playerID] and self.PlayerDrawData[playerID][#self.PlayerDrawData[playerID]]
+    local lastPoint = self.PlayerDrawData[playerID][#self.PlayerDrawData[playerID]]
     if lastPoint and not isNewLine then
-        local dist = math_sqrt((currentX - lastPoint.x)^2 + (currentY - lastPoint.y)^2)
+        local dist = math.sqrt((currentX - lastPoint.x)^2 + (currentY - lastPoint.y)^2)
         if dist < 1 then
             isDuplicate = true
         end
     end
     
     if not isDuplicate then
-        -- Создаем точку
         local newPoint = {
             x = currentX,
             y = currentY,
-            color = color,
+            color = Color(color.r, color.g, color.b),
             size = pointSize,
             playerID = playerID,
             timestamp = CurTime()
         }
+        local pointsToDraw = {newPoint}
         
-        -- Добавляем в буфер
         table.insert(self.drawPointsBuffer, newPoint)
         table.insert(self.PlayerDrawData[playerID], newPoint)
         
-        -- Рисуем линии между точками для этого игрока
         local lastPlayerPos = self.PlayerLastDrawPos[playerID]
         if lastPlayerPos and not isNewLine then
             local lastX, lastY = lastPlayerPos.x, lastPlayerPos.y
-            local dist = math_sqrt((currentX - lastX)^2 + (currentY - lastY)^2)
-            
-            if dist > 3 then
-                local steps = math_max(2, math_floor(dist / 6))
+            local dist = math.sqrt((currentX - lastX)^2 + (currentY - lastY)^2)
+            if dist > 2 then
+                local steps = math.max(2, math.floor(dist / self.interpStep))
                 for i = 1, steps - 1 do
                     local t = i / steps
                     local lineX = lastX + (currentX - lastX) * t
                     local lineY = lastY + (currentY - lastY) * t
-                    
+
                     local linePoint = {
                         x = lineX,
                         y = lineY,
-                        color = color,
+                        color = Color(color.r, color.g, color.b),
                         size = pointSize,
                         playerID = playerID,
                         timestamp = CurTime() + i * 0.001
                     }
-                    
                     table.insert(self.drawPointsBuffer, linePoint)
                     table.insert(self.PlayerDrawData[playerID], linePoint)
+                    table.insert(pointsToDraw, linePoint)
                 end
             end
         end
+        
+        self.PlayerLastDrawPos[playerID] = {x = currentX, y = currentY}
+        
+        self:DrawPointsOnRT(pointsToDraw)
     end
-    
-    -- Обновляем позиции
-    self.PlayerLastDrawPos[playerID] = {x = currentX, y = currentY}
-    
-    -- Немедленная отрисовка
-    self:SmoothImmediateRedraw()
 end
 
 function ENT:EraseOnBoard(hitPos, size, isNewLine, player)
@@ -310,10 +365,16 @@ function ENT:EraseOnBoard(hitPos, size, isNewLine, player)
     local localPos = self:WorldToLocal(hitPos)
     if not self:IsPointOnBoard(localPos) then return end
     
+    local ply = IsValid(player) and player or LocalPlayer()
+    if not IsValid(ply) then return end
+    if ply:GetPos():DistToSqr(self:GetPos()) > MAX_DRAW_DISTANCE_SQ then
+        return
+    end
+
     local texCoordX, texCoordY = self:LocalToTextureCoords(localPos)
-    local texSizeX, texSizeY = 1024, 1024
-    local currentX = texCoordX * texSizeX
-    local currentY = texCoordY * texSizeY
+    local canvasSize = whiteboardRTs[entIndex].size or 1024
+    local currentX = texCoordX * canvasSize
+    local currentY = texCoordY * canvasSize
     local eraseSize = size or 20
     local eraseRadius = eraseSize / 2
 
@@ -321,19 +382,16 @@ function ENT:EraseOnBoard(hitPos, size, isNewLine, player)
         self.LastErasePos = nil
     end
 
-    -- Получаем ID игрока
     local playerID = self:GetPlayerID(player)
     
-    -- Стираем точки
-    local erasedPoints = self:EraseAtPosition(currentX, currentY, eraseRadius, playerID)
+    self:EraseAtPosition(currentX, currentY, eraseRadius, playerID)
     
-    -- Рисуем линии стирания
     if self.LastErasePos and not isNewLine then
         local lastX, lastY = self.LastErasePos.x, self.LastErasePos.y
-        local dist = math_sqrt((currentX - lastX)^2 + (currentY - lastY)^2)
+        local dist = math.sqrt((currentX - lastX)^2 + (currentY - lastY)^2)
         
-        if dist > 3 then
-            local steps = math_max(2, math_floor(dist / 6))
+        if dist > 2 then
+            local steps = math.max(2, math.floor(dist / self.interpStep))
             for i = 1, steps - 1 do
                 local t = i / steps
                 local lineX = lastX + (currentX - lastX) * t
@@ -345,34 +403,26 @@ function ENT:EraseOnBoard(hitPos, size, isNewLine, player)
     end
     
     self.LastErasePos = {x = currentX, y = currentY}
-    
-    -- Перерисовываем
-    self:SmoothImmediateRedraw()
+    self:ForceRedraw()
 end
 
 function ENT:EraseAtPosition(x, y, radius, playerID)
     local pointsToRemove = {}
-    local erasedPoints = {}
     local radiusSquared = radius * radius
     
-    -- Ищем точки для удаления в drawPointsBuffer
     for i, point in ipairs(self.drawPointsBuffer) do
         local distSquared = (point.x - x)^2 + (point.y - y)^2
         if distSquared <= radiusSquared then
-            -- Если указан конкретный игрок, стираем только его точки
             if not playerID or point.playerID == playerID then
                 table.insert(pointsToRemove, i)
-                table.insert(erasedPoints, point)
             end
         end
     end
     
-    -- Удаляем из основного буфера
     for i = #pointsToRemove, 1, -1 do
         table.remove(self.drawPointsBuffer, pointsToRemove[i])
     end
     
-    -- Также удаляем из данных игрока
     if playerID and self.PlayerDrawData[playerID] then
         local playerPointsToRemove = {}
         for i, point in ipairs(self.PlayerDrawData[playerID]) do
@@ -386,95 +436,18 @@ function ENT:EraseAtPosition(x, y, radius, playerID)
             table.remove(self.PlayerDrawData[playerID], playerPointsToRemove[i])
         end
     end
-    
-    return erasedPoints
-end
-
-function ENT:ScheduleOptimizedRedraw()
-    self.lastImmediateRedraw = self.lastImmediateRedraw or 0
-    self.lastFullRedraw = self.lastFullRedraw or 0
-    self.immediateRedrawRate = self.immediateRedrawRate or 0.05
-    self.fullRedrawRate = self.fullRedrawRate or 0.3
-    
-    local currentTime = CurTime()
-    
-    if currentTime - self.lastImmediateRedraw >= self.immediateRedrawRate then
-        self:SmoothImmediateRedraw()
-        self.lastImmediateRedraw = currentTime
-    end
-end
-
-function ENT:SmoothImmediateRedraw()
-    local entIndex = self:EntIndex()
-    if not whiteboardRTs[entIndex] then return end
-    
-    local success, err = pcall(function()
-        render.PushRenderTarget(whiteboardRTs[entIndex].rt)
-        render.OverrideAlphaWriteEnable(true, true)
-        
-        cam.Start2D()
-        
-        -- Очищаем и перерисовываем ВСЕ точки
-        render.Clear(0, 0, 0, 0)
-        
-        -- Рисуем все точки из drawPointsBuffer
-        for _, point in ipairs(self.drawPointsBuffer) do
-            surface.SetDrawColor(point.color.r, point.color.g, point.color.b, 255)
-            local radius = point.size or 8
-            self:DrawOptimizedCircle(point.x, point.y, radius/2)
-        end
-        
-        cam.End2D()
-        render.OverrideAlphaWriteEnable(false)
-        render.PopRenderTarget()
-    end)
-    
-    if not success then
-        pcall(function() cam.End2D() end)
-        pcall(function() render.OverrideAlphaWriteEnable(false) end)
-        pcall(function() render.PopRenderTarget() end)
-        ErrorNoHalt("SmoothImmediateRedraw error: " .. tostring(err) .. "\n")
-        return
-    end
-    
-    self:UpdateWhiteboardMaterial()
-end
-
-function ENT:ScheduleFullRedraw()
-    self.fullRedrawScheduled = self.fullRedrawScheduled or false
-    
-    if self.fullRedrawScheduled then return end
-    
-    self.fullRedrawScheduled = true
-    
-    timer.Simple(self.fullRedrawRate or 0.3, function()
-        if IsValid(self) then
-            self:SmoothImmediateRedraw()  -- Используем ту же функцию
-        end
-        self.fullRedrawScheduled = false
-    end)
 end
 
 function ENT:ForceRedraw()
-    self:SmoothImmediateRedraw()
-end
-
-function ENT:DrawOptimizedCircle(x, y, radius)
-    local segments
-    if radius <= 4 then segments = 8
-    elseif radius <= 8 then segments = 12
-    else segments = 16 end
+    local entIndex = self:EntIndex()
+    if not whiteboardRTs[entIndex] or not whiteboardRTs[entIndex].rt then return end
     
-    local circlePoly = GetCachedCircle(radius, segments)
-    local positionedPoly = {}
+    render.PushRenderTarget(whiteboardRTs[entIndex].rt)
+    render.Clear(0, 0, 0, 0)
+    render.PopRenderTarget()
     
-    for _, vertex in ipairs(circlePoly) do
-        positionedPoly[#positionedPoly + 1] = {
-            x = x + vertex.x,
-            y = y + vertex.y
-        }
-    end
-    surface.DrawPoly(positionedPoly)
+    self:DrawPointsOnRT(self.drawPointsBuffer)
+    self:UpdateWhiteboardMaterial()
 end
 
 function ENT:UpdateWhiteboardMaterial()
@@ -486,15 +459,15 @@ function ENT:UpdateWhiteboardMaterial()
     mat:Recompute()
 end
 
-function ENT:Draw()
-    self:DrawModel()
-    self:DrawWhiteboard()
-    self:DrawLampGlow()
-end
-
 function ENT:DrawWhiteboard()
     local entIndex = self:EntIndex()
-    if not whiteboardRTs[entIndex] then return end
+    
+    if not whiteboardRTs[entIndex] or not whiteboardRTs[entIndex].rt then
+        self:InitializeWhiteboard()
+        if not whiteboardRTs[entIndex] or not whiteboardRTs[entIndex].rt then
+            return
+        end
+    end
     
     local mat = whiteboardRTs[entIndex].mat
     if not mat then return end
@@ -518,11 +491,24 @@ function ENT:DrawWhiteboard()
     local bottomRight = pos + (up * (-halfHeight)) + (right * halfWidth)
     local bottomLeft = pos + (up * (-halfHeight)) + (right * (-halfWidth))
     
+    render.SetBlend(1)
+    render.SetColorModulation(1, 1, 1)
     render.SetMaterial(mat)
     render.DrawQuad(topLeft, topRight, bottomRight, bottomLeft)
 end
 
+function ENT:Draw()
+    self:DrawModel()
+    self:DrawWhiteboard()
+    self:DrawLampGlow()
+end
+
 function ENT:Think()
+    local entIndex = self:EntIndex()
+    if whiteboardRTs[entIndex] and whiteboardRTs[entIndex].poolData then
+        whiteboardRTs[entIndex].poolData.lastUsed = CurTime()
+    end
+
     self:UpdateLight()
     self:NextThink(CurTime() + 0.1)
     return true
@@ -599,11 +585,58 @@ function ENT:DrawLampGlow()
 end
 
 function ENT:OnRemove()
+    WhiteboardRTPool:ReleaseBoardRT(self)
+    
     local entIndex = self:EntIndex()
     if whiteboardRTs[entIndex] then
         whiteboardRTs[entIndex] = nil
     end
+    
+    if self.ProjectedTexture then
+        self.ProjectedTexture:Remove()
+        self.ProjectedTexture = nil
+    end
 end
+
+net.Receive("MarkerDraw", function()
+    local whiteboard = net.ReadEntity()
+    local hitPos = net.ReadVector()
+    local color = net.ReadColor()
+    local size = net.ReadUInt(8)
+    local isNewLine = net.ReadBool()
+    local player = net.ReadEntity()
+    
+    if IsValid(whiteboard) and whiteboard.DrawOnBoard then
+        whiteboard:DrawOnBoard(hitPos, color, size, isNewLine, player)
+    end
+end)
+
+net.Receive("MarkerErase", function()
+    local whiteboard = net.ReadEntity()
+    local hitPos = net.ReadVector()
+    local size = net.ReadUInt(8)
+    local isNewLine = net.ReadBool()
+    local player = net.ReadEntity()
+    
+    if IsValid(whiteboard) and whiteboard.EraseOnBoard then
+        whiteboard:EraseOnBoard(hitPos, size, isNewLine, player)
+    end
+end)
+
+net.Receive("WhiteboardClear", function()
+    local whiteboard = net.ReadEntity()
+    if IsValid(whiteboard) and whiteboard.ClearWhiteboard then
+        whiteboard:ClearWhiteboard()
+    end
+end)
+
+net.Receive("WhiteboardClearPlayer", function()
+    local whiteboard = net.ReadEntity()
+    local player = net.ReadEntity()
+    if IsValid(whiteboard) and whiteboard.ClearPlayerDrawings then
+        whiteboard:ClearPlayerDrawings(player)
+    end
+end)
 
 concommand.Add("marker_clear", function(ply)
     local tr = ply:GetEyeTrace()
@@ -615,21 +648,6 @@ concommand.Add("marker_clear", function(ply)
         print("Look at a whiteboard to clear it!")
     end
 end)
-
--- concommand.Add("marker_local_clear", function(ply)
---     local tr = ply:GetEyeTrace()
---     local ent = tr.Entity
---     if IsValid(ent) and (ent:GetClass() == "little_whiteboard" or ent:GetClass() == "whiteboard") then
---         if ent.ClearPlayerDrawings then
---             ent:ClearPlayerDrawings(ply)
---             print("Your drawings cleared!")
---         else
---             print("This whiteboard doesn't support player-specific clearing")
---         end
---     else
---         print("Look at a whiteboard to clear your drawings!")
---     end
--- end)
 
 hook.Add("KeyRelease", "WhiteboardForceRedraw", function(ply, key)
     if key == IN_ATTACK or key == IN_ATTACK2 then

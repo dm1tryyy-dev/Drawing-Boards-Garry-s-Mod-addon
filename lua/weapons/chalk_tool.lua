@@ -72,7 +72,7 @@ if SERVER then
             net.WriteEntity(chalkboard)
             net.WriteVector(hitPos)
             net.WriteColor(actualColor) -- Используем актуальный цвет
-            net.WriteUInt(size, 8)
+            net.WriteUInt(size,8)
             net.WriteBool(isNewLine)
             net.WriteEntity(ply)
         net.SendPVS(chalkboard:GetPos())
@@ -98,7 +98,7 @@ if SERVER then
         net.Start("ChalkErase")
             net.WriteEntity(chalkboard)
             net.WriteVector(hitPos)
-            net.WriteUInt(size, 8)
+            net.WriteUInt(size,8)
             net.WriteBool(isNewLine)
             net.WriteEntity(ply)
         net.SendPVS(chalkboard:GetPos())
@@ -157,6 +157,7 @@ SWEP.Author = "Err0X1s"
 SWEP.Instructions = "LMB: Draw | RMB: Erase | R: Quick color change | T: Open menu"
 SWEP.Spawnable = true
 SWEP.AdminSpawnable = true
+--SWEP.NoAnimations = true
 SWEP.Category = "Drawing Tools"
 SWEP.IconOverride = "vgui/entities/spawnicons/chalk_icon.png"
 SWEP.Slot = 5
@@ -212,7 +213,7 @@ function SWEP:Initialize()
         -- Инициализация из общей конфигурации
         self.CurrentColor = self.CurrentColor or "white"
         self.ColorIndex = 1 -- Инициализация индекса на клиенте
-        self.CurrentSizeValue = 7  -- Значение по умолчанию
+        self.CurrentSizeValue = 7.0  -- Значение по умолчанию
         self.CurrentEraseSizeValue = 15  -- Значение по умолчанию
 
         -- Устанавливаем начальный цвет
@@ -372,39 +373,35 @@ function SWEP:SetPlayerEraseSize(sizeName)
     end
 end
 
--- Заменяем функцию GetDrawSizeValue:
 function SWEP:GetDrawSizeValue()
     if CLIENT then
-        -- Возвращаем текущее числовое значение
-        return self.CurrentSizeValue or 7
+        
+        return self.CurrentSizeValue or 7.0
     else
         -- SERVER
         local owner = self:GetOwner()
         if IsValid(owner) then
             local userid = owner:UserID()
-            if self.PlayerData and self.PlayerData[userid] then
-                return self.PlayerData[userid].sizeValue or 7
+            if self.PlayerData and self.PlayerData[userid] and self.PlayerData[userid].sizeValue then
+                return self.PlayerData[userid].sizeValue
             end
         end
-        return 7
+        return 7.0
     end
 end
 
--- Заменяем функцию GetEraseSizeValue:
 function SWEP:GetEraseSizeValue()
     if CLIENT then
-        -- Возвращаем текущее числовое значение
-        return self.CurrentEraseSizeValue or 15
+        return self.CurrentEraseSizeValue or 15.0
     else
-        -- SERVER
         local owner = self:GetOwner()
         if IsValid(owner) then
             local userid = owner:UserID()
-            if self.PlayerData and self.PlayerData[userid] then
-                return self.PlayerData[userid].eraseSizeValue or 15
+            if self.PlayerData and self.PlayerData[userid] and self.PlayerData[userid].eraseSizeValue then
+                return self.PlayerData[userid].eraseSizeValue
             end
         end
-        return 15
+        return 15.0
     end
 end
 
@@ -455,20 +452,31 @@ function SWEP:Deploy()
     if CLIENT then
         timer.Simple(0.1, function()
             if IsValid(self) then
+                -- Для мела цвет по умолчанию - white
                 self:SyncColorToServer(self.CurrentColor or "white")
                 
-                -- ВАЖНО: Инициализируем переменные размера если они не установлены
-                if not self.CurrentSizeValue then
-                    self.CurrentSizeValue = self:GetDrawSizeValue()
+                -- ВАЖНО: Устанавливаем значения по умолчанию если они не установлены
+                if not self.CurrentSizeValue or self.CurrentSizeValue == 0 then
+                    self.CurrentSizeValue = 7.0
                 end
                 
-                if not self.CurrentEraseSizeValue then
-                    self.CurrentEraseSizeValue = self:GetEraseSizeValue()
+                if not self.CurrentEraseSizeValue or self.CurrentEraseSizeValue == 0 then
+                    self.CurrentEraseSizeValue = 15.0
                 end
+                
+                -- Отправляем текущие значения на сервер для синхронизации
+                net.Start("ChalkMarkerUI_UpdateWeapon")
+                    net.WriteString(self.CurrentColor or "white")
+                    net.WriteUInt(self.CurrentSizeValue,8)
+                net.SendToServer()
+                
+                net.Start("ChalkMarkerUI_UpdateEraseSize")
+                    net.WriteUInt(self.CurrentEraseSizeValue,8)
+                net.SendToServer()
             end
         end)
     end
-    
+
     return true
 end
 
@@ -493,7 +501,6 @@ function SWEP:Reload()
         local nextColor = self:GetNextColor()
         self:SetPlayerColor(nextColor)
         self.LastColorSwitch = CurTime() + 0.5
-        
         return true
     end
     
@@ -646,7 +653,7 @@ function SWEP:PrimaryAttack()
             net.WriteEntity(tr.Entity)
             net.WriteVector(tr.HitPos)
             net.WriteColor(self:GetDrawColor())
-            net.WriteUInt(sizeValue or 7, 8)
+            net.WriteUInt(sizeValue or 7,8)
             net.WriteBool(true)
         net.SendToServer()
     end
@@ -668,7 +675,7 @@ function SWEP:SecondaryAttack()
         net.Start("ChalkErase")
             net.WriteEntity(tr.Entity)
             net.WriteVector(tr.HitPos)
-            net.WriteUInt(eraseSizeValue or 12, 8)
+            net.WriteUInt(eraseSizeValue or 12,8)
             net.WriteBool(true)
         net.SendToServer()
     end
@@ -717,7 +724,7 @@ function SWEP:Think()
                     net.WriteEntity(tr.Entity)
                     net.WriteVector(tr.HitPos)
                     net.WriteColor(self:GetDrawColor())
-                    net.WriteUInt(sizeValue or 7, 8)
+                    net.WriteUInt(sizeValue or 7,8)
                     net.WriteBool(isNewLine)
                 net.SendToServer()
                 
@@ -736,7 +743,7 @@ function SWEP:Think()
                 net.Start("ChalkErase")
                     net.WriteEntity(tr.Entity)
                     net.WriteVector(tr.HitPos)
-                    net.WriteUInt(eraseSizeValue or 12, 8)
+                    net.WriteUInt(eraseSizeValue or 12,8)
                     net.WriteBool(isNewLine)
                 net.SendToServer()
                 
@@ -746,14 +753,18 @@ function SWEP:Think()
         end
     else
         -- СЕРВЕРНАЯ ЧАСТЬ
-        if isAttacking and CurTime() >= self:GetNextPrimaryFire() then
-            self:SetNextPrimaryFire(CurTime() + 0.02)
-            self.WasAttacking = true
+        if isAttacking then
+            if CurTime() >= self:GetNextPrimaryFire() then
+                self:SetNextPrimaryFire(CurTime() + 0.02)
+                self.WasAttacking = true
+            end
         end
 
-        if isAttacking2 and CurTime() >= self:GetNextSecondaryFire() then
-            self:SetNextSecondaryFire(CurTime() + 0.02)
-            self.WasAttacking2 = true
+        if isAttacking2 then
+            if CurTime() >= self:GetNextSecondaryFire() then
+                self:SetNextSecondaryFire(CurTime() + 0.02)
+                self.WasAttacking2 = true
+            end
         end
     end
 end
@@ -813,25 +824,25 @@ if CLIENT then
         end
     end)
 
-    net.Receive("ChalkMarkerUI_SyncSize", function()
-        local weapon = net.ReadEntity()
-        local sizeValue = net.ReadUInt(8)
+    -- net.Receive("ChalkMarkerUI_SyncSize", function()
+    --     local weapon = net.ReadEntity()
+    --     local sizeValue = net.ReadUInt(8)
         
-        if IsValid(weapon) then
-            weapon.CurrentSizeValue = sizeValue
-            --print("[CLIENT] Draw size synced: " .. sizeValue)
-        end
-    end)
+    --     if IsValid(weapon) then
+    --         weapon.CurrentSizeValue = sizeValue
+    --         --print("[CLIENT] Draw size synced: " .. sizeValue)
+    --     end
+    -- end)
     
-    net.Receive("ChalkMarkerUI_SyncEraseSize", function()
-        local weapon = net.ReadEntity()
-        local sizeValue = net.ReadUInt(8)
+    -- net.Receive("ChalkMarkerUI_SyncEraseSize", function()
+    --     local weapon = net.ReadEntity()
+    --     local sizeValue = net.ReadUInt(8)
         
-        if IsValid(weapon) then
-            weapon.CurrentEraseSizeValue = sizeValue
-            --print("[CLIENT] Erase size synced: " .. sizeValue)
-        end
-    end)
+    --     if IsValid(weapon) then
+    --         weapon.CurrentEraseSizeValue = sizeValue
+    --         --print("[CLIENT] Erase size synced: " .. sizeValue)
+    --     end
+    -- end)
 end
 
 

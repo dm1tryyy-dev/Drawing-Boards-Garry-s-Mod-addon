@@ -6,8 +6,14 @@ ENT.Category = ""
 ENT.Spawnable = false
 ENT.AdminSpawnable = false
 ENT.RenderGroup = RENDERGROUP_OPAQUE
+DEFINE_BASECLASS("base_gmodentity")
 
-ENT = ENT or {}
+
+cleanup.Register("little_whiteboards")
+if SERVER then
+    CreateConVar("sbox_maxlittle_whiteboards", 3, {FCVAR_NOTIFY, FCVAR_REPLICATED, FCVAR_ARCHIVE, FCVAR_PROTECTED})
+end
+
 
 function ENT:GetChalkboardBounds()
     -- Серверная версия

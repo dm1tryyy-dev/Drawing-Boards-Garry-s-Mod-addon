@@ -3,6 +3,7 @@ include("shared.lua")
 whiteboardRTs = whiteboardRTs or {}
 local DRAW_DISTANCE = 100
 local MAX_DRAW_DISTANCE_SQ = DRAW_DISTANCE * DRAW_DISTANCE
+local WHITEBOARD_ASPECT = 37.85 / 21.7
 
 local markerMaterial = Material("render/marker_draw_unit")
 markerMaterial:SetFloat("$alpha", 1)
@@ -250,12 +251,13 @@ function ENT:DrawPointsOnRT(points)
     
     for _, point in ipairs(points) do
         surface.SetDrawColor(point.color.r, point.color.g, point.color.b, 255)
-        local halfSize = point.size / 2
+        local w = point.w or point.size
+        local h = point.h or point.size
         surface.DrawTexturedRect(
-            math.Round(point.x - halfSize),
-            math.Round(point.y - halfSize),
-            point.size,
-            point.size
+            math.Round(point.x - w / 2),
+            math.Round(point.y - h / 2),
+            w,
+            h
         )
     end
     
@@ -291,7 +293,10 @@ function ENT:DrawOnBoard(hitPos, color, size, isNewLine, player)
 
     local currentX = texCoordX * canvasSize
     local currentY = texCoordY * canvasSize
-    local pointSize = (size or 8) * scaleFactor 
+
+    local baseSize = (size or 8) * scaleFactor
+    local pointW = baseSize
+    local pointH = baseSize * WHITEBOARD_ASPECT
     
     local playerID = self:GetPlayerID(player)
     
@@ -315,7 +320,8 @@ function ENT:DrawOnBoard(hitPos, color, size, isNewLine, player)
             x = currentX,
             y = currentY,
             color = Color(color.r, color.g, color.b),
-            size = pointSize,
+            w = pointW,
+            h = pointH,
             playerID = playerID,
             timestamp = CurTime()
         }
@@ -339,7 +345,8 @@ function ENT:DrawOnBoard(hitPos, color, size, isNewLine, player)
                         x = lineX,
                         y = lineY,
                         color = Color(color.r, color.g, color.b),
-                        size = pointSize,
+                        w = pointW,
+                        h = pointH,
                         playerID = playerID,
                         timestamp = CurTime() + i * 0.001
                     }

@@ -256,6 +256,9 @@ function TOOL:LeftClick(trace)
     local lightBrightness = self:GetClientNumber("brightness")
     local lightDistance = self:GetClientNumber("distance")
     
+    -- ВАЖНО: получаем значение физики ЗДЕСЬ
+    local physicsEnabled = self:GetClientNumber("physics") == 1
+    
     ent:Spawn()
     ent:Activate()
 
@@ -318,7 +321,6 @@ function TOOL:LeftClick(trace)
     
     return true
 end
-
 
 function TOOL:RightClick(trace)
     if CLIENT then return true end

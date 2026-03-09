@@ -528,8 +528,8 @@ SWEP.ViewModelOffset = Vector(22, 12, -2.5)
 SWEP.ViewModelAngle = Angle(45, 0, 0)
 
 -- Настройки для WORLD модели
-SWEP.WorldModelOffset = Vector(7, 1, 0)
-SWEP.WorldModelAngle = Angle(25, -10, -5)
+SWEP.WorldModelOffset = Vector(8, -2, 0)
+SWEP.WorldModelAngle = Angle(-25, -10, -5)
 
 function SWEP:GetViewModelPosition(pos, ang)
     pos = pos + self.ViewModelOffset.x * ang:Forward()
@@ -548,38 +548,56 @@ function SWEP:DrawWorldModel()
     
     -- Если оружие в руках игрока
     if IsValid(owner) then
-        -- ДЛЯ ВСЕХ ИГРОКОВ (и для себя через камеру, и для других) используем кастомную отрисовку
+        -- КРИТИЧНО: обновляем кости перед получением матрицы
+        owner:SetupBones()
+        
         local bone = owner:LookupBone("ValveBiped.Bip01_R_Hand")
         
         if bone then
             local matrix = owner:GetBoneMatrix(bone)
             if matrix then
-                local pos, ang = matrix:GetTranslation(), matrix:GetAngles()
+                -- Получаем позицию и угол из матрицы кости
+                local pos = matrix:GetTranslation()
+                local ang = matrix:GetAngles()
                 
-                -- Применяем смещения
-                pos = pos + ang:Forward() * self.WorldModelOffset.x
-                pos = pos + ang:Right() * self.WorldModelOffset.y
-                pos = pos + ang:Up() * self.WorldModelOffset.z
+                -- Применяем смещения с использованием локальных координат
+                local offsetPos = self.WorldModelOffset or Vector(7, 1, 0)
+                local offsetAng = self.WorldModelAngle or Angle(25, -10, -5)
                 
-                ang:RotateAroundAxis(ang:Right(), self.WorldModelAngle.p)
-                ang:RotateAroundAxis(ang:Up(), self.WorldModelAngle.y)
-                ang:RotateAroundAxis(ang:Forward(), self.WorldModelAngle.r)
+                -- Конвертируем локальные смещения в мировые координаты
+                local newPos, newAng = LocalToWorld(
+                    offsetPos, 
+                    offsetAng, 
+                    pos, 
+                    ang
+                )
+                
+                -- Устанавливаем позицию для отрисовки
+                self:SetRenderOrigin(newPos)
+                self:SetRenderAngles(newAng)
+                
+                -- КРИТИЧНО: принудительно обновляем кости модели оружия
+                self:SetupBones()
                 
                 -- Рисуем модель
-                self:SetRenderOrigin(pos)
-                self:SetRenderAngles(ang)
                 self:DrawModel()
+                
+                -- Сбрасываем рендер позицию (важно для последующих кадров)
                 self:SetRenderOrigin()
                 self:SetRenderAngles()
                 
-                -- Выходим, т.к. уже отрисовали
                 return
             end
         end
+        
+        -- Fallback если не нашли кость - используем стандартную отрисовку
+        self:DrawModel()
+    else
+        -- Если оружие на земле - стандартная отрисовка
+        self:SetRenderOrigin(nil)
+        self:SetRenderAngles(nil)
+        self:DrawModel()
     end
-    
-    -- Fallback: если что-то пошло не так - стандартная отрисовка
-    self:DrawModel()
 end
 
 function SWEP:DrawWorldModelTranslucent()
@@ -658,7 +676,7 @@ function SWEP:PrimaryAttack()
         net.SendToServer()
     end
     
-    self:SetNextPrimaryFire(CurTime() + 0.05)
+    self:SetNextPrimaryFire(CurTime() + 0.02)
     self.WasAttacking = true
 end
 
@@ -680,7 +698,7 @@ function SWEP:SecondaryAttack()
         net.SendToServer()
     end
     
-    self:SetNextSecondaryFire(CurTime() + 0.05)
+    self:SetNextSecondaryFire(CurTime() + 0.02)
     self.WasAttacking2 = true
 end
 
@@ -728,7 +746,7 @@ function SWEP:Think()
                     net.WriteBool(isNewLine)
                 net.SendToServer()
                 
-                self:SetNextPrimaryFire(CurTime() + 0.02)
+                self:SetNextPrimaryFire(CurTime() + 0.01)
                 self.WasAttacking = true
             end
         end
@@ -747,7 +765,7 @@ function SWEP:Think()
                     net.WriteBool(isNewLine)
                 net.SendToServer()
                 
-                self:SetNextSecondaryFire(CurTime() + 0.02)
+                self:SetNextSecondaryFire(CurTime() + 0.01)
                 self.WasAttacking2 = true
             end
         end
@@ -755,14 +773,14 @@ function SWEP:Think()
         -- СЕРВЕРНАЯ ЧАСТЬ
         if isAttacking then
             if CurTime() >= self:GetNextPrimaryFire() then
-                self:SetNextPrimaryFire(CurTime() + 0.02)
+                self:SetNextPrimaryFire(CurTime() + 0.01)
                 self.WasAttacking = true
             end
         end
 
         if isAttacking2 then
             if CurTime() >= self:GetNextSecondaryFire() then
-                self:SetNextSecondaryFire(CurTime() + 0.02)
+                self:SetNextSecondaryFire(CurTime() + 0.01)
                 self.WasAttacking2 = true
             end
         end

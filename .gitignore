@@ -1,0 +1,11 @@
+*.mdl
+*.vtx
+*.vvd
+*.phy
+*.smd
+*.qc
+*.vmt
+*.vtf
+models/
+models_source/
+materials/

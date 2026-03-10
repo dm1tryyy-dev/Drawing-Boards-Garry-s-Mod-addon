@@ -10,6 +10,7 @@
         ".git",
         "lua/.git",
         "LICENSE",
-        "README.md"
+        "README.md",
+        ".gitignore"
     ]
 }

@@ -6,6 +6,7 @@
 *.qc
 *.vmt
 *.vtf
+*.png
 models/
 models_source/
 materials/

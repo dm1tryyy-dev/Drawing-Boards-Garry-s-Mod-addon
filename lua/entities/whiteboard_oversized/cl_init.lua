@@ -1,25 +1,25 @@
 include("shared.lua")
 
-whiteboardRTs = whiteboardRTs or {}
+whiteboardOSRTs = whiteboardOSRTs or {}
 local DRAW_DISTANCE = 200
 local MAX_DRAW_DISTANCE_SQ = DRAW_DISTANCE * DRAW_DISTANCE
-local WHITEBOARD_ASPECT = 37.85 / 21.7
+local WHITEBOARD_ASPECT = 84.5 / 48.4
 
 local markerMaterial = Material("render/marker_draw_unit")
 markerMaterial:SetFloat("$alpha", 1)
 markerMaterial:SetInt("$translucent", 1)
 
-WhiteboardRTPool = WhiteboardRTPool or {
+WhiteboardOSRTPool = WhiteboardOSRTPool or {
     free = {},
     used = {},
     size = 3,
     format = {
         size = 1024,
-        name = "WhiteboardRT"
+        name = "WhiteboardOSRT"
     }
 }
 
-function WhiteboardRTPool:Initialize()
+function WhiteboardOSRTPool:Initialize()
     if #self.free > 0 then return end
     
     for i = 1, self.size do
@@ -44,7 +44,7 @@ function WhiteboardRTPool:Initialize()
     end
 end
 
-function WhiteboardRTPool:GetBoardRT(ent)
+function WhiteboardOSRTPool:GetBoardRT(ent)
     if not IsValid(ent) then return nil end
     
     local entIndex = ent:EntIndex()
@@ -82,7 +82,7 @@ function WhiteboardRTPool:GetBoardRT(ent)
     return nil
 end
 
-function WhiteboardRTPool:ReleaseBoardRT(ent)
+function WhiteboardOSRTPool:ReleaseBoardRT(ent)
     if not IsValid(ent) then return end
     
     local entIndex = ent:EntIndex()
@@ -93,7 +93,7 @@ function WhiteboardRTPool:ReleaseBoardRT(ent)
     end
 end
 
-WhiteboardRTPool:Initialize()
+WhiteboardOSRTPool:Initialize()
 
 function ENT:Initialize()
     self.LampSprite = Material("sprites/light_glow02_add_noz")
@@ -134,15 +134,15 @@ function ENT:Initialize()
 end
 
 function ENT:InitializeWhiteboard()
-    local rtData = WhiteboardRTPool:GetBoardRT(self)
+    local rtData = WhiteboardOSRTPool:GetBoardRT(self)
     if not rtData then return end
     
     local entIndex = self:EntIndex()
-    whiteboardRTs[entIndex] = whiteboardRTs[entIndex] or {}
-    whiteboardRTs[entIndex].rt = rtData.rt
-    whiteboardRTs[entIndex].mat = rtData.mat
-    whiteboardRTs[entIndex].size = self.canvasSize
-    whiteboardRTs[entIndex].poolData = rtData
+    whiteboardOSRTs[entIndex] = whiteboardOSRTs[entIndex] or {}
+    whiteboardOSRTs[entIndex].rt = rtData.rt
+    whiteboardOSRTs[entIndex].mat = rtData.mat
+    whiteboardOSRTs[entIndex].size = self.canvasSize
+    whiteboardOSRTs[entIndex].poolData = rtData
     
     render.PushRenderTarget(rtData.rt)
     render.Clear(0, 0, 0, 0)
@@ -162,7 +162,7 @@ end
 
 function ENT:ClearWhiteboard()
     local entIndex = self:EntIndex()
-    if not whiteboardRTs[entIndex] then return end
+    if not whiteboardOSRTs[entIndex] then return end
     
     self.PlayerDrawData = {}
     self.PlayerColors = {}
@@ -206,20 +206,27 @@ function ENT:ClearPlayerDrawings(player)
     self:ForceRedraw()
 end
 
+local DRAW_BOUNDS_OFFSET_X = 1
+local DRAW_BOUNDS_OFFSET_Y = -1
+local DRAW_BOUNDS_OFFSET_Z = 1.4
+
 function ENT:GetWhiteboardBounds()
     if not self._cachedBounds then
-        local halfWidth = 37.85
-        local halfHeight = 21.7
+        local halfWidth = 84.5
+        local halfHeight = 48.4
         
         self._cachedBounds = {
-            mins = Vector(-2, -halfWidth, -halfHeight),
-            maxs = Vector(2, halfWidth, halfHeight)
+            mins = Vector(-2 + DRAW_BOUNDS_OFFSET_X, -halfWidth + DRAW_BOUNDS_OFFSET_Y, -halfHeight + DRAW_BOUNDS_OFFSET_Z),
+            maxs = Vector(2 + DRAW_BOUNDS_OFFSET_X, halfWidth + DRAW_BOUNDS_OFFSET_Y, halfHeight + DRAW_BOUNDS_OFFSET_Z)
         }
     end
     return self._cachedBounds.mins, self._cachedBounds.maxs
 end
 
--- прицел
+--прицел
+local TEXTURE_OFFSET_Y = -1.9
+local TEXTURE_OFFSET_Z = 1.2
+
 function ENT:LocalToTextureCoords(localPos)
     if not self._texScale then
         local mins, maxs = self:GetWhiteboardBounds()
@@ -229,11 +236,8 @@ function ENT:LocalToTextureCoords(localPos)
         self._texOffsetY = -mins.z
     end
     
-    local correctionY = -1.2
-    local correctionZ = -1
-    
-    local correctedY = localPos.y + correctionY
-    local correctedZ = localPos.z + correctionZ
+    local correctedY = localPos.y + TEXTURE_OFFSET_Y
+    local correctedZ = localPos.z + TEXTURE_OFFSET_Z
     
     local texCoordX = (correctedY + self._texOffsetX) * self._texScaleX
     local texCoordY = 1 - ((correctedZ + self._texOffsetY) * self._texScaleY)
@@ -255,7 +259,7 @@ function ENT:IsPointOnBoard(localPos)
 end
 
 function ENT:GetRTData()
-    return whiteboardRTs[self:EntIndex()]
+    return whiteboardOSRTs[self:EntIndex()]
 end
 
 function ENT:GetDrawMaterial()
@@ -293,7 +297,6 @@ function ENT:DrawPointsOnRT(points)
     local material = self:GetDrawMaterial()
     surface.SetMaterial(material)
     
-    -- Рисуем точки в порядке их создания (сохраняя порядок слоев)
     for _, point in ipairs(points) do
         if not point.__removed then
             surface.SetDrawColor(point.color.r, point.color.g, point.color.b, 255)
@@ -329,9 +332,9 @@ function ENT:DrawOnBoard(hitPos, color, size, isNewLine, player)
     if not IsValid(self) then return end
     
     local entIndex = self:EntIndex()
-    if not whiteboardRTs[entIndex] then
+    if not whiteboardOSRTs[entIndex] then
         self:InitializeWhiteboard()
-        if not whiteboardRTs[entIndex] then return end
+        if not whiteboardOSRTs[entIndex] then return end
     end
 
     local localPos = self:WorldToLocal(hitPos)
@@ -345,7 +348,7 @@ function ENT:DrawOnBoard(hitPos, color, size, isNewLine, player)
 
     local texCoordX, texCoordY = self:LocalToTextureCoords(localPos)
     
-    local canvasSize = whiteboardRTs[entIndex].size or 1024
+    local canvasSize = whiteboardOSRTs[entIndex].size or 1024
     local scaleFactor = 1024 / canvasSize
 
     local currentX = texCoordX * canvasSize
@@ -455,7 +458,7 @@ function ENT:EraseOnBoard(hitPos, size, isNewLine, player)
     if not IsValid(self) then return end
     
     local entIndex = self:EntIndex()
-    if not whiteboardRTs[entIndex] then return end
+    if not whiteboardOSRTs[entIndex] then return end
     
     local localPos = self:WorldToLocal(hitPos)
     if not self:IsPointOnBoard(localPos) then return end
@@ -467,7 +470,7 @@ function ENT:EraseOnBoard(hitPos, size, isNewLine, player)
     end
 
     local texCoordX, texCoordY = self:LocalToTextureCoords(localPos)
-    local canvasSize = whiteboardRTs[entIndex].size or 1024
+    local canvasSize = whiteboardOSRTs[entIndex].size or 1024
     local currentX = texCoordX * canvasSize
     local currentY = texCoordY * canvasSize
     local eraseSize = size or 20
@@ -591,24 +594,24 @@ end
 
 function ENT:UpdateWhiteboardMaterial()
     local entIndex = self:EntIndex()
-    if not whiteboardRTs[entIndex] or not whiteboardRTs[entIndex].mat then return end
+    if not whiteboardOSRTs[entIndex] or not whiteboardOSRTs[entIndex].mat then return end
     
-    local mat = whiteboardRTs[entIndex].mat
-    mat:SetTexture("$basetexture", whiteboardRTs[entIndex].rt)
+    local mat = whiteboardOSRTs[entIndex].mat
+    mat:SetTexture("$basetexture", whiteboardOSRTs[entIndex].rt)
     mat:Recompute()
 end
 
 function ENT:DrawWhiteboard()
     local entIndex = self:EntIndex()
     
-    if not whiteboardRTs[entIndex] or not whiteboardRTs[entIndex].rt then
+    if not whiteboardOSRTs[entIndex] or not whiteboardOSRTs[entIndex].rt then
         self:InitializeWhiteboard()
-        if not whiteboardRTs[entIndex] or not whiteboardRTs[entIndex].rt then
+        if not whiteboardOSRTs[entIndex] or not whiteboardOSRTs[entIndex].rt then
             return
         end
     end
     
-    local mat = whiteboardRTs[entIndex].mat
+    local mat = whiteboardOSRTs[entIndex].mat
     if not mat then return end
 
     local pos = self:GetPos()
@@ -619,11 +622,11 @@ function ENT:DrawWhiteboard()
     local forward = ang:Forward()
     
     pos = pos - forward
-    pos = pos + right*1.2
-    pos = pos + up
+    pos = pos + right
+    pos = pos + up * 0.01
     
-    local halfWidth = 37.85
-    local halfHeight = 21.7
+    local halfWidth = 84.5
+    local halfHeight = 48.4
     
     local topLeft = pos + (up * halfHeight) + (right * (-halfWidth))
     local topRight = pos + (up * halfHeight) + (right * halfWidth)
@@ -644,8 +647,8 @@ end
 
 function ENT:Think()
     local entIndex = self:EntIndex()
-    if whiteboardRTs[entIndex] and whiteboardRTs[entIndex].poolData then
-        whiteboardRTs[entIndex].poolData.lastUsed = CurTime()
+    if whiteboardOSRTs[entIndex] and whiteboardOSRTs[entIndex].poolData then
+        whiteboardOSRTs[entIndex].poolData.lastUsed = CurTime()
     end
 
     self:UpdateLight()
@@ -675,7 +678,7 @@ function ENT:UpdateLight()
     local lampLocalPos = Vector(0, 0, 24.5)
     local lampWorldPos = self:LocalToWorld(lampLocalPos)
     local forward = self:GetForward()
-    local lightPos = lampWorldPos + forward * 15
+    local lightPos = lampWorldPos + forward * 25
     
     local lightColor = self:GetLightColor()
     
@@ -686,7 +689,7 @@ function ENT:UpdateLight()
         dlight.g = lightColor.y
         dlight.b = lightColor.z
         dlight.Brightness = self:GetLightBrightness() * 0.5
-        dlight.Size = self:GetLightDistance() * 2
+        dlight.Size = self:GetLightDistance() * 5
         dlight.Decay = 1000
         dlight.DieTime = CurTime() + 1
     end
@@ -697,12 +700,12 @@ function ENT:DrawLampGlow()
     
     local lightColor = self:GetLightColor()
     local brightness = self:GetLightBrightness() * 0.3
-    local lampLocalPos = Vector(1.3, 0, 22)
+    local lampLocalPos = Vector(2.7, 0, 49)
     local lampWorldPos = self:LocalToWorld(lampLocalPos)
     local right = self:GetRight()
     local up = self:GetUp()
 
-    local baseWidth = 200
+    local baseWidth = 500
     local baseHeight = 16
 
     render.SuppressEngineLighting(true)
@@ -740,11 +743,11 @@ function ENT:DrawLampGlow()
 end
 
 function ENT:OnRemove()
-    WhiteboardRTPool:ReleaseBoardRT(self)
+    WhiteboardOSRTPool:ReleaseBoardRT(self)
     
     local entIndex = self:EntIndex()
-    if whiteboardRTs[entIndex] then
-        whiteboardRTs[entIndex] = nil
+    if whiteboardOSRTs[entIndex] then
+        whiteboardOSRTs[entIndex] = nil
     end
     
     if self.ProjectedTexture then

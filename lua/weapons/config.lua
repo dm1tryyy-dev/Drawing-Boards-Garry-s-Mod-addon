@@ -35,54 +35,58 @@ if SERVER then
     net.Receive("ChalkMarkerUI_UpdateWeapon", function(len, ply)
         local colorName = net.ReadString()
         local sizeValue = net.ReadFloat()
+        local customColor = nil
+        
+        if colorName == "__custom__" then
+            customColor = net.ReadColor()
+        end
         
         local weapon = ply:GetActiveWeapon()
         if IsValid(weapon) and (weapon:GetClass() == "chalk_tool" or weapon:GetClass() == "marker_tool") then
-            
-            -- Определяем тип оружия
             local weaponType = weapon:GetClass() == "chalk_tool" and "chalk" or "marker"
-            
-            -- Устанавливаем цвет
-            if weapon.SetPlayerColor then
-                weapon:SetPlayerColor(colorName)
-            else
-                weapon.CurrentColor = colorName
-                if weaponType == "chalk" and weapon.SetChalkColor then
-                    weapon:SetChalkColor(colorName)
-                elseif weaponType == "marker" and weapon.SetMarkerColor then
-                    weapon:SetMarkerColor(colorName)
-                end
-            end
-            
-            -- Сохраняем только числовое значение
             local userid = ply:UserID()
             weapon.PlayerData = weapon.PlayerData or {}
             weapon.PlayerData[userid] = weapon.PlayerData[userid] or {}
-            weapon.PlayerData[userid].sizeValue = sizeValue
             
-            -- Сохраняем в локальные переменные
+            if colorName == "__custom__" and customColor then
+                weapon.PlayerData[userid].customColor = customColor
+                weapon.PlayerData[userid].color = "__custom__"
+                weapon.CustomColor = customColor
+                weapon.CurrentColor = "__custom__"
+                
+                if weaponType == "chalk" and weapon.SetChalkColor2 then
+                    weapon:SetChalkColor2(Vector(customColor.r/255, customColor.g/255, customColor.b/255))
+                elseif weaponType == "marker" and weapon.SetMarkerColor2 then
+                    weapon:SetMarkerColor2(Vector(customColor.r/255, customColor.g/255, customColor.b/255))
+                    if weapon.SetBodyTexture then
+                        weapon:SetBodyTexture("models/tools_materials/marker/colors/marker_base_texture")
+                    end
+                end
+            else
+                
+                weapon.PlayerData[userid].color = colorName
+                weapon.PlayerData[userid].customColor = nil
+                weapon.CurrentColor = colorName
+                weapon.CustomColor = nil
+                
+                if weapon.SetPlayerColor then
+                    weapon:SetPlayerColor(colorName)
+                else
+                    if weaponType == "chalk" and weapon.SetChalkColor then
+                        weapon:SetChalkColor(colorName)
+                    elseif weaponType == "marker" and weapon.SetMarkerColor then
+                        weapon:SetMarkerColor(colorName)
+                    end
+                end
+            end
+            
+            weapon.PlayerData[userid].sizeValue = sizeValue
             weapon.CurrentSizeValue = sizeValue
             
-            -- Синхронизируем размер с клиентом
             net.Start("ChalkMarkerUI_SyncSize")
                 net.WriteEntity(weapon)
                 net.WriteFloat(sizeValue)
             net.Send(ply)
-            
-            -- Синхронизируем цвет с клиентом
-            if weaponType == "chalk" then
-                net.Start("ChalkColorUpdate")
-                    net.WriteEntity(weapon)
-                    net.WriteString(colorName)
-                net.Send(ply)
-            else
-                net.Start("MarkerColorUpdate")
-                    net.WriteEntity(weapon)
-                    net.WriteString(colorName)
-                net.Send(ply)
-            end
-            
-            --print("[SERVER] Weapon updated: color=" .. colorName .. ", size=" .. sizeValue)
         end
     end)
 
@@ -264,13 +268,13 @@ ChalkMarkerConfig.DynamicSizes = {
         draw_min = 5.0,   -- Минимальный размер рисования для мела
         draw_max = 10.0,  -- Максимальный размер рисования для мела
         erase_min = 10.0,  -- Минимальный размер стирания для мела
-        erase_max = 20.0  -- Максимальный размер стирания для мела
+        erase_max = 50.0  -- Максимальный размер стирания для мела
     },
     marker = {
-        draw_min = 7,   -- Минимальный размер рисования для маркера
-        draw_max = 15,  -- Максимальный размер рисования для маркера
-        erase_min = 10,  -- Минимальный размер стирания для маркера
-        erase_max = 20  -- Максимальный размер стирания для маркера
+        draw_min = 7.0,   -- Минимальный размер рисования для маркера
+        draw_max = 15.0,  -- Максимальный размер рисования для маркера
+        erase_min = 10.0,  -- Минимальный размер стирания для маркера
+        erase_max = 50.0  -- Максимальный размер стирания для маркера
     }
 }
 

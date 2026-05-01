@@ -50,8 +50,8 @@ if SERVER then
         -- Проверяем, что игрок имеет доступ
         if not IsValid(chalkboard) or not IsValid(ply) then return end
         
-        -- Проверяем, что это chalkboard
-        if chalkboard:GetClass() ~= "chalkboard" then return end
+        local class = chalkboard:GetClass()
+        if class ~= "chalkboard" and class ~= "chalkboard_oversized" then return end
         
         -- ВАЖНО: получаем актуальный цвет из оружия игрока
         local weapon = ply:GetActiveWeapon()
@@ -87,8 +87,8 @@ if SERVER then
         
         if not IsValid(chalkboard) or not IsValid(ply) then return end
         
-        -- Проверяем, что это chalkboard
-        if chalkboard:GetClass() ~= "chalkboard" then return end
+        local class = chalkboard:GetClass()
+        if class ~= "chalkboard" and class ~= "chalkboard_oversized" then return end
         
         -- Также вызываем локально для сервера
         if chalkboard.EraseOnBoard then
@@ -108,7 +108,8 @@ if SERVER then
     concommand.Add("chalk_clear", function(ply)
         local tr = ply:GetEyeTrace()
         local ent = tr.Entity
-        if IsValid(ent) and ent:GetClass() == "chalkboard" then
+        local class = ent:GetClass()
+        if IsValid(ent) and (class == "chalkboard" or  class == "chalkboard_oversized") then
             -- Очищаем локально на сервере
             if ent.ClearChalkboard then
                 ent:ClearChalkboard()
@@ -129,7 +130,8 @@ if SERVER then
     concommand.Add("chalk_clear_my", function(ply)
         local tr = ply:GetEyeTrace()
         local ent = tr.Entity
-        if IsValid(ent) and ent:GetClass() == "chalkboard" then
+        local class = ent:GetClass()
+        if IsValid(ent) and (class == "chalkboard" or  class == "chalkboard_oversized") then
             if ent.ClearPlayerDrawings then
                 -- Очищаем локально на сервере
                 ent:ClearPlayerDrawings(ply)
@@ -194,7 +196,8 @@ SWEP.ColorIndex = 1
 -- Функция проверки является ли энтити chalkboard
 function SWEP:IsChalkboard(entity)
     if not IsValid(entity) then return false end
-    return entity:GetClass() == "chalkboard"
+    local class = entity:GetClass()
+    return class == "chalkboard" or class == "chalkboard_oversized"
 end
 
 function SWEP:Initialize()
@@ -243,7 +246,6 @@ function SWEP:GetPlayerColor()
     local owner = self:GetOwner()
     if not IsValid(owner) then return "white" end
     
-    -- Используем UserID для более быстрого доступа
     local userid = owner:UserID()
     local data = self.PlayerData[userid]
     if not data then
@@ -251,7 +253,7 @@ function SWEP:GetPlayerColor()
         self.PlayerData[userid] = data
     end
     
-    return data.color
+    return data.color or "white"
 end
 
 function SWEP:SetPlayerColor(colorName)
@@ -448,14 +450,11 @@ function SWEP:SyncColorIndexToClient()
 end
 
 function SWEP:Deploy()
-    -- Синхронизируем цвет при взятии оружия
     if CLIENT then
         timer.Simple(0.1, function()
             if IsValid(self) then
-                -- Для мела цвет по умолчанию - white
                 self:SyncColorToServer(self.CurrentColor or "white")
                 
-                -- ВАЖНО: Устанавливаем значения по умолчанию если они не установлены
                 if not self.CurrentSizeValue or self.CurrentSizeValue == 0 then
                     self.CurrentSizeValue = 7.0
                 end
@@ -464,19 +463,21 @@ function SWEP:Deploy()
                     self.CurrentEraseSizeValue = 15.0
                 end
                 
-                -- Отправляем текущие значения на сервер для синхронизации
+                local colorName = self.CurrentColor or "white"
                 net.Start("ChalkMarkerUI_UpdateWeapon")
-                    net.WriteString(self.CurrentColor or "white")
-                    net.WriteUInt(self.CurrentSizeValue,8)
+                    net.WriteString(colorName)
+                    net.WriteFloat(self.CurrentSizeValue)
+                    if colorName == "__custom__" and self.CustomColor then
+                        net.WriteColor(self.CustomColor)
+                    end
                 net.SendToServer()
                 
                 net.Start("ChalkMarkerUI_UpdateEraseSize")
-                    net.WriteUInt(self.CurrentEraseSizeValue,8)
+                    net.WriteFloat(self.CurrentEraseSizeValue)
                 net.SendToServer()
             end
         end)
     end
-
     return true
 end
 
@@ -516,9 +517,27 @@ function SWEP:SyncColorToServer(colorName)
 end
 
 function SWEP:GetDrawColor()
-    local currentColor = self:GetPlayerColor()
-    local resultColor = ChalkMarkerConfig.GetDrawColor("chalk", currentColor)
-    return resultColor
+    if CLIENT then
+        local currentColor = self:GetPlayerColor()
+        if currentColor == "__custom__" and self.CustomColor then
+            return self.CustomColor
+        end
+        return ChalkMarkerConfig.GetDrawColor("chalk", currentColor)
+    else
+        -- SERVER
+        local owner = self:GetOwner()
+        if not IsValid(owner) then return Color(240, 240, 230) end
+        
+        local userid = owner:UserID()
+        local data = self.PlayerData[userid]
+        if data then
+            if data.color == "__custom__" and data.customColor then
+                return data.customColor
+            end
+            return ChalkMarkerConfig.GetDrawColor("chalk", data.color or "white")
+        end
+        return Color(240, 240, 230)
+    end
 end
 
 -- ========================================
@@ -603,59 +622,6 @@ end
 function SWEP:DrawWorldModelTranslucent()
     self:DrawWorldModel()
 end
-
---[[
--- Закомментированная функция кастомной отрисовки
-function SWEP:DrawWorldModelCustom()
-    local owner = self:GetOwner()
-    if not IsValid(owner) then
-        self:DrawModel()
-        return
-    end
-    
-    -- Проверяем кости в порядке: кисть -> предплечье -> плечо
-    local boneNames = {
-        "ValveBiped.Bip01_R_Hand",      -- Кисть
-        "ValveBiped.Bip01_R_Forearm",   -- Предплечье
-        "ValveBiped.Bip01_R_Upperarm",  -- Плечо
-    }
-    
-    local boneIndex
-    for _, boneName in ipairs(boneNames) do
-        boneIndex = owner:LookupBone(boneName)
-        if boneIndex then break end
-    end
-    
-    if not boneIndex then 
-        self:DrawModel()
-        return
-    end
-    
-    -- Получаем позицию и угол кости в мировых координатах
-    local bonePos, boneAng = owner:GetBonePosition(boneIndex)
-    if not bonePos then 
-        self:DrawModel()
-        return
-    end
-    
-    -- Применяем смещения
-    local pos = bonePos + boneAng:Forward() * self.WorldModelOffset.x
-    pos = pos + boneAng:Right() * self.WorldModelOffset.y
-    pos = pos + boneAng:Up() * self.WorldModelOffset.z
-    
-    local ang = Angle(boneAng.p, boneAng.y, boneAng.r)
-    ang:RotateAroundAxis(ang:Right(), self.WorldModelAngle.p)
-    ang:RotateAroundAxis(ang:Up(), self.WorldModelAngle.y)
-    ang:RotateAroundAxis(ang:Forward(), self.WorldModelAngle.r)
-    
-    self:SetRenderOrigin(pos)
-    self:SetRenderAngles(ang)
-    self:DrawModel()
-
-    self:SetRenderOrigin()
-    self:SetRenderAngles()
-end
---]]
 
 function SWEP:PrimaryAttack()
     local owner = self:GetOwner()
@@ -841,26 +807,6 @@ if CLIENT then
             end
         end
     end)
-
-    -- net.Receive("ChalkMarkerUI_SyncSize", function()
-    --     local weapon = net.ReadEntity()
-    --     local sizeValue = net.ReadUInt(8)
-        
-    --     if IsValid(weapon) then
-    --         weapon.CurrentSizeValue = sizeValue
-    --         --print("[CLIENT] Draw size synced: " .. sizeValue)
-    --     end
-    -- end)
-    
-    -- net.Receive("ChalkMarkerUI_SyncEraseSize", function()
-    --     local weapon = net.ReadEntity()
-    --     local sizeValue = net.ReadUInt(8)
-        
-    --     if IsValid(weapon) then
-    --         weapon.CurrentEraseSizeValue = sizeValue
-    --         --print("[CLIENT] Erase size synced: " .. sizeValue)
-    --     end
-    -- end)
 end
 
 
@@ -870,7 +816,7 @@ if CLIENT then
     local hintOffset = -300
     local hintStartTime = 0
     local isShowingHint = false
-    
+
     function SWEP:DrawHUD()
         local owner = self:GetOwner()
         if not IsValid(owner) or owner ~= LocalPlayer() then return end
@@ -878,7 +824,6 @@ if CLIENT then
         
         local currentTime = CurTime()
         
-        -- Начинаем показ подсказки при первом вызове DrawHUD после взятия оружия
         if not isShowingHint then
             isShowingHint = true
             hintStartTime = currentTime
@@ -888,22 +833,16 @@ if CLIENT then
         
         local timeSinceShow = currentTime - hintStartTime
         
-        -- Показываем 10 секунд, затем скрываем 0.5 секунды
         if timeSinceShow < 10 then
-            -- Анимация появления
             hintAlpha = math.min(hintAlpha + FrameTime() * 6, 1)
             hintOffset = math.min(hintOffset + FrameTime() * 600, 20)
         elseif timeSinceShow < 10.5 then
-            -- Анимация исчезновения
             local fadeProgress = (timeSinceShow - 10) / 0.5
             hintOffset = Lerp(fadeProgress, 20, -300)
             hintAlpha = Lerp(fadeProgress, 1, 0)
         else
-            -- Подсказка завершена
-            return
+            hintAlpha = 0
         end
-        
-        if hintAlpha <= 0.01 then return end
         
         local hints = {
             "LMB: Draw",
@@ -935,34 +874,124 @@ if CLIENT then
         local x = hintOffset
         local y = ScrH() / 2 - totalHeight / 2
         
-        -- Фон
-        surface.SetDrawColor(0, 0, 0, 200 * hintAlpha)
-        surface.DrawRect(x, y, totalWidth, totalHeight)
-        
-        -- Толстая рамка
-        local border = 3
-        surface.SetDrawColor(255, 212, 0, 255 * hintAlpha)
-        surface.DrawRect(x, y, totalWidth, border)
-        surface.DrawRect(x, y + totalHeight - border, totalWidth, border)
-        surface.DrawRect(x, y, border, totalHeight)
-        surface.DrawRect(x + totalWidth - border, y, border, totalHeight)
-        
-        -- Заголовок
-        local titleY = y + padding
-        draw.SimpleText(title, "DermaDefaultBold", x + totalWidth / 2, titleY, 
-                       Color(255, 255, 255, 255 * hintAlpha), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
-        
-        -- Разделительная линия под заголовком
-        local lineY = titleY + lineHeight - 5
-        surface.SetDrawColor(255, 212, 0, 150 * hintAlpha)
-        surface.DrawRect(x + padding, lineY, totalWidth - padding * 2, 1)
-        
-        -- Подсказки
-        for i, hint in ipairs(hints) do
-            local textY = y + padding + i * lineHeight
-            draw.SimpleText(hint, "HudSelectionText", x + padding, textY, 
-                           Color(255, 212, 0, 255 * hintAlpha), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+        if hintAlpha > 0.01 then
+            surface.SetDrawColor(0, 0, 0, 200 * hintAlpha)
+            surface.DrawRect(x, y, totalWidth, totalHeight)
+            
+            local border = 3
+            surface.SetDrawColor(255, 212, 0, 255 * hintAlpha)
+            surface.DrawRect(x, y, totalWidth, border)
+            surface.DrawRect(x, y + totalHeight - border, totalWidth, border)
+            surface.DrawRect(x, y, border, totalHeight)
+            surface.DrawRect(x + totalWidth - border, y, border, totalHeight)
+            
+            local titleY = y + padding
+            draw.SimpleText(title, "DermaDefaultBold", x + totalWidth / 2, titleY, 
+                        Color(255, 255, 255, 255 * hintAlpha), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+            
+            local lineY = titleY + lineHeight - 5
+            surface.SetDrawColor(255, 212, 0, 150 * hintAlpha)
+            surface.DrawRect(x + padding, lineY, totalWidth - padding * 2, 1)
+            
+            for i, hint in ipairs(hints) do
+                local textY = y + padding + i * lineHeight
+                draw.SimpleText(hint, "HudSelectionText", x + padding, textY, 
+                            Color(255, 212, 0, 255 * hintAlpha), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+            end
         end
+        
+        -- НЕГАТИВНЫЙ ПРИЦЕЛ ЧЕРЕЗ OVERRIDEBLEND (ВСЕГДА ПОКАЗЫВАЕТСЯ)
+        local isErasing = owner:KeyDown(IN_ATTACK2)
+        local isDrawing = owner:KeyDown(IN_ATTACK)
+        
+        local centerX = ScrW() / 2
+        local centerY = ScrH() / 2
+        
+        -- Определяем радиус в зависимости от режима
+        local radius
+        if isErasing then
+            radius = self:GetEraseSizeValue() or 15
+            -- radius = radius * 1.5 -- Увеличиваем для лучшей видимости
+        elseif isDrawing then
+            radius = self:GetDrawSizeValue() or 7
+            radius = radius * 1.5 -- Увеличиваем для лучшей видимости
+        else
+            radius = 20 -- Радиус по умолчанию когда ничего не нажато
+        end
+        
+        local dotRadius = 5 -- Статический радиус центрального круга
+        local thickness = 3 -- Толщина кольца
+        
+        -- Кэшируем геометрию прицела
+        local cacheKey = radius .. "_" .. ScrW() .. "_" .. ScrH()
+        if not self.ReticleCacheKey or self.ReticleCacheKey ~= cacheKey then
+            self.ReticleCacheKey = cacheKey
+            self.RingPolyCache = {}
+            self.DotPolyCache = {}
+            
+            local segments = 48
+            local angleStep = (2 * math.pi) / segments
+            local innerRadius = radius - thickness
+            
+            -- Кэшируем кольцо
+            local outerPoints = {}
+            local innerPoints = {}
+            
+            for i = 0, segments do
+                local angle = i * angleStep
+                local cosA = math.cos(angle)
+                local sinA = math.sin(angle)
+                
+                outerPoints[i+1] = {
+                    x = centerX + cosA * radius,
+                    y = centerY + sinA * radius
+                }
+                innerPoints[i+1] = {
+                    x = centerX + cosA * innerRadius,
+                    y = centerY + sinA * innerRadius
+                }
+            end
+            
+            for i = 1, segments do
+                table.insert(self.RingPolyCache, {
+                    outerPoints[i],
+                    outerPoints[i+1],
+                    innerPoints[i+1],
+                    innerPoints[i]
+                })
+            end
+            
+            -- Кэшируем центральный круг
+            for i = 0, segments do
+                local angle = i * angleStep
+                table.insert(self.DotPolyCache, {
+                    x = centerX + math.cos(angle) * dotRadius,
+                    y = centerY + math.sin(angle) * dotRadius
+                })
+            end
+        end
+        
+        draw.NoTexture()
+        
+        -- Включаем режим инверсии
+        render.OverrideBlend(true, BLEND_ONE_MINUS_DST_COLOR, BLEND_ZERO, BLENDFUNC_ADD)
+        
+        surface.SetDrawColor(255, 255, 255, 255)
+        
+        -- Рисуем кольцо
+        if self.RingPolyCache then
+            for _, poly in ipairs(self.RingPolyCache) do
+                surface.DrawPoly(poly)
+            end
+        end
+        
+        -- Рисуем центральный круг
+        if self.DotPolyCache then
+            surface.DrawPoly(self.DotPolyCache)
+        end
+        
+        -- Выключаем инверсию
+        render.OverrideBlend(false)
     end
     
     -- Сбрасываем флаг при убирании оружия
@@ -985,3 +1014,16 @@ if CLIENT then
         end
     end)
 end
+
+-- Отключаем стандартный прицел когда оружие активно
+hook.Add("HUDShouldDraw", "ChalkTool_HideDefaultCrosshair", function(name)
+    if name == "CHudCrosshair" then
+        local ply = LocalPlayer()
+        if IsValid(ply) then
+            local wep = ply:GetActiveWeapon()
+            if IsValid(wep) and wep:GetClass() == "chalk_tool" then
+                return false
+            end
+        end
+    end
+end)

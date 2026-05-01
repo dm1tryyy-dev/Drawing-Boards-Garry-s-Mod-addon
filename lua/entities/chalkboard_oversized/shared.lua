@@ -1,6 +1,6 @@
 ENT.Type = "anim"
 ENT.Base = "base_gmodentity"
-ENT.PrintName = "Chalkboard"
+ENT.PrintName = "Chalkboard (oversized)"
 ENT.Author = "Err0X1s"
 ENT.Category = ""
 ENT.Spawnable = false
@@ -8,9 +8,9 @@ ENT.AdminSpawnable = false
 ENT.RenderGroup = RENDERGROUP_OPAQUE
 DEFINE_BASECLASS("base_gmodentity")
 
-cleanup.Register("chalkboards")
+cleanup.Register("chalkboards_os")
 if SERVER then
-    CreateConVar("sbox_maxchalkboards", 3, {FCVAR_NOTIFY, FCVAR_REPLICATED, FCVAR_ARCHIVE, FCVAR_PROTECTED})
+    CreateConVar("sbox_maxchalkboards_os", 3, {FCVAR_NOTIFY, FCVAR_REPLICATED, FCVAR_ARCHIVE, FCVAR_PROTECTED})
 end
 
 function ENT:SetupDataTables()
@@ -28,10 +28,12 @@ function ENT:SetupDataTables()
 end
 
 function ENT:GetChalkboardBounds()
-    local halfWidth = 40.3
-    local halfHeight = 21.7
+    local halfWidth = 89.5
+    local halfHeight = 48.0
+    local DRAW_BOUNDS_OFFSET_X = 2.5
     
-    return Vector(-2, -halfWidth, -halfHeight), Vector(2, halfWidth, halfHeight)
+    return Vector(-2 + DRAW_BOUNDS_OFFSET_X, -halfWidth, -halfHeight), 
+           Vector(2 + DRAW_BOUNDS_OFFSET_X, halfWidth, halfHeight)
 end
 
 function ENT:DrawOnBoard(hitPos, color, size)

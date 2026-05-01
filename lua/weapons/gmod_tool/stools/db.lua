@@ -1,10 +1,12 @@
+include("shared.lua")
+
 TOOL.Category = "Drawing Boards"
 TOOL.Name = "#Boards"
 TOOL.Mode = "db"
 TOOL.Command = nil
 TOOL.ConfigName = ""
 
--- Типы досок
+-- Типы досок (определение)
 local BoardTypes = {
     ["chalkboard"] = {
         model = "models/boards/chalkboard/chalkboard.mdl",
@@ -12,7 +14,8 @@ local BoardTypes = {
         static = true,
         has_light = true,
         wall_offset = 1.0,
-        limit_name = "chalkboards"
+        limit_name = "chalkboards",
+        display_name = "Chalkboard"
     },
     ["whiteboard"] = {
         model = "models/boards/whiteboard/whiteboard.mdl",
@@ -20,7 +23,8 @@ local BoardTypes = {
         static = true,
         has_light = true,
         wall_offset = 1.0,
-        limit_name = "whiteboards"
+        limit_name = "whiteboards",
+        display_name = "Whiteboard"
     },
     ["little whiteboard"] = {
         model = "models/boards/little_whiteboard/little_whiteboard.mdl",
@@ -28,8 +32,36 @@ local BoardTypes = {
         static = false,
         has_light = false,
         floor_offset = 5,
-        limit_name = "little_whiteboards"
-    }
+        limit_name = "little_whiteboards",
+        display_name = "Little Whiteboard"
+    },
+    ["chalkboard_oversized"] = {
+        model = "models/boards/chalkboard/oversized/chalkboard_oversized.mdl",
+        class = "chalkboard_oversized",
+        static = true,
+        has_light = true,
+        wall_offset = 1.0,
+        limit_name = "chalkboards_os",
+        display_name = "Oversized Chalkboard"
+    },
+    ["whiteboard_oversized"] = {
+        model = "models/boards/whiteboard/oversized/whiteboard_oversized.mdl",
+        class = "whiteboard_oversized",
+        static = true,
+        has_light = true,
+        wall_offset = 1.0,
+        limit_name = "whiteboards_os",
+        display_name = "Oversized Whiteboard"
+    },
+}
+
+-- ПОРЯДОК ОТОБРАЖЕНИЯ В PROP SELECT (в нужном порядке)
+local BoardOrder = {
+    "chalkboard",
+    "whiteboard",
+    "little whiteboard",
+    "chalkboard_oversized",
+    "whiteboard_oversized"
 }
 
 if SERVER then
@@ -45,7 +77,6 @@ if CLIENT then
     local ghostEntity = nil
     local lastBoardType = ""
 
-    -- Клиентская часть для уведомлений
     net.Receive("Notification", function()
         local message = net.ReadString()
         local notifyType = net.ReadUInt(5)
@@ -66,7 +97,6 @@ TOOL.ClientConVar = {
     ["brightness"] = "6",     
     ["distance"] = "200",
 }
-
 
 -- проверка на размещение
 function CanPlaceOnSurface(trace, normalThreshold)
@@ -204,17 +234,13 @@ function TOOL:LeftClick(trace)
     -- === ДИНАМИЧЕСКИЙ ЛИМИТ ===
     local isAdmin = ply:IsAdmin()
     local isSinglePlayer = game.SinglePlayer()
-    
-    -- Для теста на себе замени isAdmin на false
     local ignoreLimit = isAdmin or isSinglePlayer 
 
     if not ignoreLimit then
-        local limitName = boardData.limit_name -- Имя лимита
-        local conVarName = "sbox_max" .. limitName -- Полное имя команды
+        local limitName = boardData.limit_name
+        local conVarName = "sbox_max" .. limitName
         
         local maxAllowed = GetConVar(conVarName):GetInt()
-        
-        -- Считаем только доски ТЕКУЩЕГО класса
         local currentCount = 0
         for _, ent in ipairs(ents.FindByClass(boardData.class)) do
             if ent:GetCreator() == ply or ent.Owner == ply then
@@ -242,13 +268,11 @@ function TOOL:LeftClick(trace)
     ent:Spawn()
     ent:Activate()
 
-    -- СВЯЗЬ ДЛЯ СЧЕТЧИКА
     ent:SetCreator(ply)
     ent.Owner = ply
     ply:AddCount(boardData.limit_name, ent)
     ply:AddCleanup(boardData.limit_name, ent)
 
-    -- Получаем значения с новыми именами ConVar
     local lightEnabled = self:GetClientNumber("light") == 1
     local lightR = self:GetClientNumber("lr")
     local lightG = self:GetClientNumber("lg")
@@ -256,7 +280,6 @@ function TOOL:LeftClick(trace)
     local lightBrightness = self:GetClientNumber("brightness")
     local lightDistance = self:GetClientNumber("distance")
     
-    -- ВАЖНО: получаем значение физики ЗДЕСЬ
     local physicsEnabled = self:GetClientNumber("physics") == 1
     
     ent:Spawn()
@@ -313,7 +336,6 @@ function TOOL:LeftClick(trace)
         end
     end
 
-    
     undo.Create("Drawing Board")
         undo.AddEntity(ent)
         undo.SetPlayer(ply)
@@ -327,17 +349,17 @@ function TOOL:RightClick(trace)
     
     local ply = self:GetOwner()
     local currentType = self:GetClientInfo("type")
-    local types = table.GetKeys(BoardTypes)
-    local currentIndex = table.KeyFromValue(types, currentType) or 1
+    -- Используем BoardOrder для переключения
+    local currentIndex = table.KeyFromValue(BoardOrder, currentType) or 1
     local nextIndex = currentIndex + 1
     
-    if nextIndex > #types then
+    if nextIndex > #BoardOrder then
         nextIndex = 1
     end
     
-    local nextType = types[nextIndex]
+    local nextType = BoardOrder[nextIndex]
     ply:ConCommand("db_type " .. nextType)
-    ply:ChatPrint("Type selected: " .. nextType)
+    ply:ChatPrint("Type selected: " .. (BoardTypes[nextType].display_name or nextType))
     
     return true
 end
@@ -355,10 +377,14 @@ function TOOL.BuildCPanel(CPanel)
         Models = {}
     })
     
-    for name, data in pairs(BoardTypes) do
-        propSelect:AddModel(data.model, {
-            db_type = name
-        })
+    -- Добавляем модели в порядке BoardOrder
+    for _, boardKey in ipairs(BoardOrder) do
+        local boardData = BoardTypes[boardKey]
+        if boardData then
+            propSelect:AddModel(boardData.model, {
+                db_type = boardKey
+            })
+        end
     end
     
     CPanel:AddControl("Label", {

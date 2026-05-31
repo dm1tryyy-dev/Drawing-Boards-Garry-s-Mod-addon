@@ -1,5 +1,3 @@
-include("shared.lua")
-
 TOOL.Category = "Drawing Boards"
 TOOL.Name = "#Boards"
 TOOL.Mode = "db"

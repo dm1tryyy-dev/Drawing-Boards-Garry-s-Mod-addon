@@ -173,7 +173,8 @@ end
 function ENT:ClearChalkboard()
     local entIndex = self:EntIndex()
     if not chalkboardOSRTs[entIndex] then return end
-    
+    self._loadingSave = false
+    self._cancelLoad = true
     self.PlayerDrawData = {}
     self.PlayerColors = {}
     self.PlayerLastDrawPos = {}
@@ -880,5 +881,17 @@ net.Receive("ChalkboardClearPlayer", function()
     local player = net.ReadEntity()
     if IsValid(chalkboard) and chalkboard.ClearPlayerDrawings then
         chalkboard:ClearPlayerDrawings(player)
+    end
+end)
+
+hook.Add("KeyRelease", "ChalkboardForceRedraw", function(ply, key)
+    if key == IN_ATTACK or key == IN_ATTACK2 then
+        local tr = ply:GetEyeTrace()
+        local ent = tr.Entity
+        if IsValid(ent) and (ent:GetClass() == "chalkboard" or ent:GetClass() == "chalkboard_oversized") then
+            if ent.ForceRedraw then
+                ent:ForceRedraw()
+            end
+        end
     end
 end)

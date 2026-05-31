@@ -162,7 +162,8 @@ end
 function ENT:ClearWhiteboard()
     local entIndex = self:EntIndex()
     if not littleWhiteboardRTs[entIndex] then return end
-    
+    self._loadingSave = false
+    self._cancelLoad = true
     self.PlayerDrawData = {}
     self.PlayerColors = {}
     self.PlayerLastDrawPos = {}
@@ -328,7 +329,6 @@ function ENT:DrawPointsOnRT(points)
     local material = self:GetDrawMaterial()
     surface.SetMaterial(material)
     
-    -- Рисуем точки в порядке их создания (сохраняя порядок слоев)
     for _, point in ipairs(points) do
         if not point.__removed then
             surface.SetDrawColor(point.color.r, point.color.g, point.color.b, 255)
@@ -623,6 +623,12 @@ end
 function ENT:ForceRedraw()
     self.dirtyRegions = { {x = 0, y = 0, w = self.canvasSize, h = self.canvasSize} }
     self.nextRedraw = 0
+end
+
+-- Принудительная перерисовка при загрузке сохранения
+function ENT:ForceFullRedraw()
+    self:ForceRedraw()
+    self:UpdateLittleWhiteboardMaterial()
 end
 
 function ENT:UpdateLittleWhiteboardMaterial()

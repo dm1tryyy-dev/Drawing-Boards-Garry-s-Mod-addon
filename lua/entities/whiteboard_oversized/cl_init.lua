@@ -163,7 +163,8 @@ end
 function ENT:ClearWhiteboard()
     local entIndex = self:EntIndex()
     if not whiteboardOSRTs[entIndex] then return end
-    
+    self._loadingSave = false
+    self._cancelLoad = true
     self.PlayerDrawData = {}
     self.PlayerColors = {}
     self.PlayerLastDrawPos = {}
@@ -592,6 +593,12 @@ function ENT:ForceRedraw()
     self.nextRedraw = 0
 end
 
+-- Принудительная перерисовка при загрузке сохранения
+function ENT:ForceFullRedraw()
+    self:ForceRedraw()
+    self:UpdateWhiteboardMaterial()
+end
+
 function ENT:UpdateWhiteboardMaterial()
     local entIndex = self:EntIndex()
     if not whiteboardOSRTs[entIndex] or not whiteboardOSRTs[entIndex].mat then return end
@@ -800,8 +807,10 @@ hook.Add("KeyRelease", "WhiteboardForceRedraw", function(ply, key)
     if key == IN_ATTACK or key == IN_ATTACK2 then
         local tr = ply:GetEyeTrace()
         local ent = tr.Entity
-        if IsValid(ent) and (ent:GetClass() == "little_whiteboard" or ent:GetClass() == "whiteboard") then
-            ent:ForceRedraw()
+        if IsValid(ent) and (ent:GetClass() == "little_whiteboard" or ent:GetClass() == "whiteboard" or ent:GetClass() == "whiteboard_oversized") then
+            if ent.ForceRedraw then
+                ent:ForceRedraw()
+            end
         end
     end
 end)

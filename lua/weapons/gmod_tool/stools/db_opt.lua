@@ -157,6 +157,233 @@ function TOOL.BuildCPanel(CPanel)
     })
     CPanel:ControlHelp("")
     
+    -- ============ КНОПКИ ДЛЯ НАСТРОЙКИ КЛАВИШ СОХРАНЕНИЯ ============
+    
+    CPanel:AddControl("Label", {
+        Text = "Save/Load Drawings Keys:"
+    })
+    CPanel:ControlHelp("")
+    
+    -- Кнопка для смены клавиши сохранения (F2)
+    local saveKeyButton = vgui.Create("DButton")
+    saveKeyButton:SetText("Change Save Drawings Key (Current: F2)")
+    saveKeyButton:SetTall(30)
+    
+    local function UpdateSaveButtonText()
+        if file.Exists("board_save_key.txt", "DATA") then
+            local savedKey = tonumber(file.Read("board_save_key.txt", "DATA"))
+            if savedKey then
+                local keyName = input.GetKeyName(savedKey)
+                saveKeyButton:SetText("Change Save Drawings Key (Current: " .. keyName .. ")")
+                return
+            end
+        end
+        saveKeyButton:SetText("Change Save Drawings Key (Current: F2)")
+    end
+    
+    UpdateSaveButtonText()
+    
+    saveKeyButton.DoClick = function()
+        saveKeyButton:SetText("Press any key...")
+        saveKeyButton:SetDisabled(true)
+        
+        local saveFrame = vgui.Create("DFrame")
+        saveFrame:SetSize(350, 150)
+        saveFrame:SetTitle("Press any keyboard key")
+        saveFrame:SetVisible(true)
+        saveFrame:SetDraggable(false)
+        saveFrame:ShowCloseButton(false)
+        saveFrame:MakePopup()
+        saveFrame:Center()
+        
+        local instructionLabel = vgui.Create("DLabel", saveFrame)
+        instructionLabel:SetText("Press any key on the keyboard to bind as SAVE DRAWINGS key\n\n(Release Q to cancel or click in any place)")
+        instructionLabel:SetPos(20, 30)
+        instructionLabel:SetSize(310, 80)
+        instructionLabel:SetContentAlignment(5)
+        instructionLabel:SetTextColor(Color(255, 255, 255))
+        instructionLabel:SetWrap(true)
+        
+        local wasQPressed = input.IsKeyDown(KEY_Q)
+        
+        saveFrame.OnKeyCodePressed = function(self, keyCode)
+            if keyCode == KEY_ESCAPE or keyCode == KEY_Q then
+                return true
+            end
+            if keyCode == KEY_LWIN or keyCode == KEY_RWIN then
+                return true
+            end
+            
+            local keyName = input.GetKeyName(keyCode)
+            file.Write("board_save_key.txt", tostring(keyCode))
+            
+            if BoardSaveSystem then
+                BoardSaveSystem.SaveKey = keyCode
+            end
+            
+            saveFrame:Remove()
+            UpdateSaveButtonText()
+            saveKeyButton:SetDisabled(false)
+            
+            print("[DB] Save drawing key set to: " .. keyName)
+            return true
+        end
+        
+        saveFrame.Think = function()
+            local isQPressedNow = input.IsKeyDown(KEY_Q)
+            if wasQPressed and not isQPressedNow then
+                saveFrame:Remove()
+                UpdateSaveButtonText()
+                saveKeyButton:SetDisabled(false)
+                return
+            end
+            wasQPressed = isQPressedNow
+            
+            if saveFrame:IsValid() and saveFrame:IsMouseInputEnabled() then
+                if input.IsMouseDown(MOUSE_LEFT) then
+                    local x, y = saveFrame:GetPos()
+                    local w, h = saveFrame:GetSize()
+                    local mouseX, mouseY = gui.MousePos()
+                    
+                    if mouseX < x or mouseX > x + w or mouseY < y or mouseY > y + h then
+                        saveFrame:Remove()
+                        UpdateSaveButtonText()
+                        saveKeyButton:SetDisabled(false)
+                    end
+                end
+            end
+        end
+        
+        saveFrame:RequestFocus()
+    end
+    
+    CPanel:AddItem(saveKeyButton)
+    
+    -- Кнопка сброса клавиши сохранения на F2
+    local resetSaveKeyButton = vgui.Create("DButton")
+    resetSaveKeyButton:SetText("Reset Save Drawings Key to Default (F2)")
+    resetSaveKeyButton:SetTall(30)
+    resetSaveKeyButton.DoClick = function()
+        file.Write("board_save_key.txt", tostring(KEY_F2))
+        if BoardSaveSystem then
+            BoardSaveSystem.SaveKey = KEY_F2
+        end
+        UpdateSaveButtonText()
+        print("[DB] Save drawing key reset to: F2")
+    end
+    CPanel:AddItem(resetSaveKeyButton)
+    CPanel:ControlHelp("")
+    
+    -- Кнопка для смены клавиши загрузки (F3)
+    local loadKeyButton = vgui.Create("DButton")
+    loadKeyButton:SetText("Change Load Drawings Key (Current: F3)")
+    loadKeyButton:SetTall(30)
+    
+    local function UpdateLoadButtonText()
+        if file.Exists("board_load_key.txt", "DATA") then
+            local savedKey = tonumber(file.Read("board_load_key.txt", "DATA"))
+            if savedKey then
+                local keyName = input.GetKeyName(savedKey)
+                loadKeyButton:SetText("Change Load Drawings Key (Current: " .. keyName .. ")")
+                return
+            end
+        end
+        loadKeyButton:SetText("Change Load Drawings Key (Current: F3)")
+    end
+    
+    UpdateLoadButtonText()
+    
+    loadKeyButton.DoClick = function()
+        loadKeyButton:SetText("Press any key...")
+        loadKeyButton:SetDisabled(true)
+        
+        local loadFrame = vgui.Create("DFrame")
+        loadFrame:SetSize(350, 150)
+        loadFrame:SetTitle("Press any keyboard key")
+        loadFrame:SetVisible(true)
+        loadFrame:SetDraggable(false)
+        loadFrame:ShowCloseButton(false)
+        loadFrame:MakePopup()
+        loadFrame:Center()
+        
+        local instructionLabel = vgui.Create("DLabel", loadFrame)
+        instructionLabel:SetText("Press any key on the keyboard to bind as LOAD DRAWINGS key\n\n(Release Q to cancel or click in any place)")
+        instructionLabel:SetPos(20, 30)
+        instructionLabel:SetSize(310, 80)
+        instructionLabel:SetContentAlignment(5)
+        instructionLabel:SetTextColor(Color(255, 255, 255))
+        instructionLabel:SetWrap(true)
+        
+        local wasQPressed = input.IsKeyDown(KEY_Q)
+        
+        loadFrame.OnKeyCodePressed = function(self, keyCode)
+            if keyCode == KEY_ESCAPE or keyCode == KEY_Q then
+                return true
+            end
+            if keyCode == KEY_LWIN or keyCode == KEY_RWIN then
+                return true
+            end
+            
+            local keyName = input.GetKeyName(keyCode)
+            file.Write("board_load_key.txt", tostring(keyCode))
+            
+            if BoardSaveSystem then
+                BoardSaveSystem.LoadKey = keyCode
+            end
+            
+            loadFrame:Remove()
+            UpdateLoadButtonText()
+            loadKeyButton:SetDisabled(false)
+            
+            print("[DB] Load drawings key set to: " .. keyName)
+            return true
+        end
+        
+        loadFrame.Think = function()
+            local isQPressedNow = input.IsKeyDown(KEY_Q)
+            if wasQPressed and not isQPressedNow then
+                loadFrame:Remove()
+                UpdateLoadButtonText()
+                loadKeyButton:SetDisabled(false)
+                return
+            end
+            wasQPressed = isQPressedNow
+            
+            if loadFrame:IsValid() and loadFrame:IsMouseInputEnabled() then
+                if input.IsMouseDown(MOUSE_LEFT) then
+                    local x, y = loadFrame:GetPos()
+                    local w, h = loadFrame:GetSize()
+                    local mouseX, mouseY = gui.MousePos()
+                    
+                    if mouseX < x or mouseX > x + w or mouseY < y or mouseY > y + h then
+                        loadFrame:Remove()
+                        UpdateLoadButtonText()
+                        loadKeyButton:SetDisabled(false)
+                    end
+                end
+            end
+        end
+        
+        loadFrame:RequestFocus()
+    end
+    
+    CPanel:AddItem(loadKeyButton)
+    
+    -- Кнопка сброса клавиши загрузки на F3
+    local resetLoadKeyButton = vgui.Create("DButton")
+    resetLoadKeyButton:SetText("Reset Load Drawings Key to Default (F3)")
+    resetLoadKeyButton:SetTall(30)
+    resetLoadKeyButton.DoClick = function()
+        file.Write("board_load_key.txt", tostring(KEY_F3))
+        if BoardSaveSystem then
+            BoardSaveSystem.LoadKey = KEY_F3
+        end
+        UpdateLoadButtonText()
+        print("[DB] Load drawings key reset to: F3")
+    end
+    CPanel:AddItem(resetLoadKeyButton)
+    CPanel:ControlHelp("")
+    
     -- Загрузка текущей клавиши при открытии панели
     if file.Exists("chalk_marker_keybind.txt", "DATA") then
         local savedKey = tonumber(file.Read("chalk_marker_keybind.txt", "DATA"))
@@ -185,6 +412,7 @@ function TOOL.BuildCPanel(CPanel)
     lowQualityCheckbox:SetText("Low Quality Mode (Recommended for weak PCs!)")
     lowQualityCheckbox:SetIndent(5)
     lowQualityCheckbox:SetTall(30)
+    lowQualityCheckbox:SetTextColor(Color(255, 255, 255))
     
     -- Загружаем сохраненное значение
     local isLowQuality = false

@@ -163,7 +163,8 @@ end
 function ENT:ClearWhiteboard()
     local entIndex = self:EntIndex()
     if not whiteboardRTs[entIndex] then return end
-    
+    self._loadingSave = false
+    self._cancelLoad = true
     self.PlayerDrawData = {}
     self.PlayerColors = {}
     self.PlayerLastDrawPos = {}
@@ -219,7 +220,6 @@ function ENT:GetWhiteboardBounds()
     return self._cachedBounds.mins, self._cachedBounds.maxs
 end
 
--- прицел
 function ENT:LocalToTextureCoords(localPos)
     if not self._texScale then
         local mins, maxs = self:GetWhiteboardBounds()
@@ -293,17 +293,14 @@ function ENT:DrawPointsOnRT(points)
     local material = self:GetDrawMaterial()
     surface.SetMaterial(material)
     
-    -- Рисуем точки в порядке их создания (сохраняя порядок слоев)
     for _, point in ipairs(points) do
         if not point.__removed then
             surface.SetDrawColor(point.color.r, point.color.g, point.color.b, 255)
-            local w = point.w or point.size
-            local h = point.h or point.size
             surface.DrawTexturedRect(
-                math.Round(point.x - w / 2),
-                math.Round(point.y - h / 2),
-                w,
-                h
+                math.Round(point.x - point.w / 2),
+                math.Round(point.y - point.h / 2),
+                point.w,
+                point.h
             )
         end
     end
@@ -619,7 +616,7 @@ function ENT:DrawWhiteboard()
     local forward = ang:Forward()
     
     pos = pos - forward
-    pos = pos + right*1.2
+    pos = pos + right * 1.2
     pos = pos + up
     
     local halfWidth = 37.85
@@ -793,12 +790,20 @@ net.Receive("WhiteboardClearPlayer", function()
     end
 end)
 
+-- Принудительная перерисовка при загрузке сохранения
+function ENT:ForceFullRedraw()
+    self:ForceRedraw()
+    self:UpdateWhiteboardMaterial()
+end
+
 hook.Add("KeyRelease", "WhiteboardForceRedraw", function(ply, key)
     if key == IN_ATTACK or key == IN_ATTACK2 then
         local tr = ply:GetEyeTrace()
         local ent = tr.Entity
-        if IsValid(ent) and (ent:GetClass() == "little_whiteboard" or ent:GetClass() == "whiteboard") then
-            ent:ForceRedraw()
+        if IsValid(ent) and (ent:GetClass() == "little_whiteboard" or ent:GetClass() == "whiteboard" or ent:GetClass() == "whiteboard_oversized") then
+            if ent.ForceRedraw then
+                ent:ForceRedraw()
+            end
         end
     end
 end)

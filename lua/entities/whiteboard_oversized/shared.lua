@@ -1,6 +1,6 @@
 ENT.Type = "anim"
 ENT.Base = "base_gmodentity"
-ENT.PrintName = "Whiteboard"
+ENT.PrintName = "Whiteboard (oversized)"
 ENT.Author = "Err0X1s"
 ENT.Category = ""
 ENT.Spawnable = false

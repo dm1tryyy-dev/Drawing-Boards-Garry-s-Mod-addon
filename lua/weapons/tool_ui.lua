@@ -3,7 +3,11 @@ print("[DB_UI] Loading interface...")
 ChalkMarkerUI = ChalkMarkerUI or {}
 ChalkMarkerUI.Keybind = KEY_T
 ChalkMarkerUI.KeybindBlocked = false
+ChalkMarkerUI.IsInputBlocked = false
 
+function ChalkMarkerUI.BlockInput(block)
+    ChalkMarkerUI.IsInputBlocked = block
+end
 
 if CLIENT then
     -- Очистку делаем ТОЛЬКО если файл загружается "сверху" (при сохранении кода)
@@ -1530,10 +1534,12 @@ end
 -- ============ КЛИЕНТСКИЕ ХУКИ ============
 
 hook.Add("Think", "ChalkMarkerUI_Main", function()
+    -- Если ввод заблокирован (открыто окно сохранения), не обрабатываем клавиши
+    if ChalkMarkerUI.IsInputBlocked then return end
     if ChalkMarkerUI.KeybindBlocked then return end
+    
     local currentKeyState = input.IsKeyDown(ChalkMarkerUI.Keybind)
     if currentKeyState and not ChalkMarkerUI.LastTState then
-        
         local ply = LocalPlayer()
         if not IsValid(ply) then return end
         
@@ -1542,7 +1548,6 @@ hook.Add("Think", "ChalkMarkerUI_Main", function()
         
         local weaponName = weapon:GetPrintName() or ""
         
-        -- Проверяем, поддерживается ли оружие
         if weaponName == "Chalk" or weaponName == "Marker" then
             if not ChalkMarkerUI.State.IsOpen then
                 ChalkMarkerUI.OpenMenu(weapon)

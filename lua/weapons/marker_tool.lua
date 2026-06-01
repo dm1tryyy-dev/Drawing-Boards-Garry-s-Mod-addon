@@ -1,5 +1,19 @@
 include("config.lua")
 
+local DEBUG_COLORS = false
+
+local function ColorDebug(...)
+    if not DEBUG_COLORS then return end
+
+    local msg = ""
+
+    for k, v in ipairs({...}) do
+        msg = msg .. tostring(v) .. " "
+    end
+
+    print("[MARKER COLOR]", msg)
+end
+
 if CLIENT then
     include("tool_ui.lua")
 end
@@ -213,6 +227,7 @@ function SWEP:Initialize()
 
     self.WasAttacking = false
     self.WasAttacking2 = false
+    self.ReloadPressed = false
 
     if CLIENT then
         self.CurrentColor = self.CurrentColor or "black"
@@ -256,6 +271,14 @@ end
 
 function SWEP:SetPlayerColor(colorName)
     local owner = self:GetOwner()
+
+    ColorDebug(
+        SERVER and "SERVER" or "CLIENT",
+        "SetPlayerColor",
+        IsValid(owner) and owner:Nick() or "NULL",
+        colorName,
+        math.floor(SysTime() * 1000)
+    )
     if not IsValid(owner) then return end
     
     local colors = ChalkMarkerConfig.ColorOrder.marker or {"black", "red", "blue", "green", "yellow", "orange", "cyan", "purple", "pink", "brown"}
@@ -280,7 +303,6 @@ function SWEP:SetPlayerColor(colorName)
         self.CurrentColor = colorName
         self.ColorIndex = foundIndex
         self:SetMarkerColor(colorName)
-        self:SyncColorToServer(colorName)
     end
 end
 
@@ -405,16 +427,6 @@ function SWEP:Deploy()
 end
 
 function SWEP:Reload()
-    local owner = self:GetOwner()
-    if IsValid(owner) and owner:KeyDown(IN_SPEED) then
-        return false
-    end
-    if CurTime() >= (self.LastColorSwitch or 0) then
-        local nextColor = self:GetNextColor()
-        self:SetPlayerColor(nextColor)
-        self.LastColorSwitch = CurTime() + 0.5
-        return true
-    end
     return false
 end
 
@@ -539,19 +551,50 @@ function SWEP:Think()
     
     local isAttacking = owner:KeyDown(IN_ATTACK)
     local isAttacking2 = owner:KeyDown(IN_ATTACK2)
+
+    local reloadDown = owner:KeyDown(IN_RELOAD)
+
+    if reloadDown and not self.ReloadPressed then
+
+        self.ReloadPressed = true
+
+        if SERVER and not owner:KeyDown(IN_SPEED) then
+
+            local currentColor = self:GetPlayerColor()
+            local nextColor = self:GetNextColor()
+
+            ColorDebug(
+                "COLOR SWITCH",
+                owner:Nick(),
+                "TIME:",
+                math.floor(SysTime() * 1000),
+                "FROM:",
+                currentColor,
+                "TO:",
+                nextColor
+            )
+
+            self:SetPlayerColor(nextColor)
+        end
+
+    elseif not reloadDown then
+
+        self.ReloadPressed = false
+
+    end
     
     if not isAttacking then self.WasAttacking = false end
     if not isAttacking2 then self.WasAttacking2 = false end
     
     if owner:KeyDown(IN_SPEED) and owner:KeyPressed(IN_RELOAD) then
-        local tr = owner:GetEyeTrace()
-        local ent = tr.Entity  
-        if self:GetClass() == "marker_tool" and IsValid(ent) and self:IsSupportedBoard(ent) then
-            if SERVER then
+        if CLIENT then
+            local tr = owner:GetEyeTrace()
+            local ent = tr.Entity
+            if IsValid(ent) and self:IsSupportedBoard(ent) then
                 RunConsoleCommand("marker_clear")
             end
-            return
         end
+        return
     end
 
     if CLIENT then

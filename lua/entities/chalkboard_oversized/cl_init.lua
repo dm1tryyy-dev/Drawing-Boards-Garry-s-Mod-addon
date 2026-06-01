@@ -643,7 +643,8 @@ function ENT:DrawChalkboard()
     local bottomLeft = pos + (up * (-halfHeight)) + (right * (-halfWidth))
     
     local lightColor = render.GetLightColor(pos)
-    
+
+        
     render.SetBlend(1)
     render.SetColorModulation(lightColor.x, lightColor.y, lightColor.z)
     render.SetMaterial(mat)
@@ -675,7 +676,6 @@ function ENT:Draw()
     self:DrawModel()
     self:DrawChalkboard()
     self:DrawLampGlow()
-    self:DrawProjectedLight()
 end
 
 function ENT:Think()
@@ -686,7 +686,7 @@ function ENT:Think()
 
     self:UpdateLight()
     self:UpdateProjectedLight()
-    
+    self:UpdateProjector()
     local ply = LocalPlayer()
     if IsValid(ply) then
         local distSq = ply:GetPos():DistToSqr(self:GetPos())
@@ -720,35 +720,62 @@ function ENT:OnRemove()
     end
 end
 
-function ENT:DrawProjectedLight()
+function ENT:UpdateProjector()
     if not self:GetLightEnabled() then return end
-    if not self.ProjectedTexture then return end
-    
+
+    if not self.ProjectedTexture then
+        self.ProjectedTexture = ProjectedTexture()
+
+        if not self.ProjectedTexture then
+            return
+        end
+
+        self.ProjectedTexture:SetTexture("effects/flashlight001")
+        self.ProjectedTexture:SetFarZ(200)
+        self.ProjectedTexture:SetFOV(120)
+        self.ProjectedTexture:SetEnableShadows(false)
+        self.ProjectedTexture:SetConstantAttenuation(1)
+        self.ProjectedTexture:SetLinearAttenuation(0.1)
+        self.ProjectedTexture:SetQuadraticAttenuation(0.01)
+    end
+
     local lightColor = self:GetLightColor()
     local brightness = self:GetLightBrightness()
     local distance = self:GetLightDistance()
 
     local normalizedColor = Vector(
         lightColor.x / 255,
-        lightColor.y / 255, 
+        lightColor.y / 255,
         lightColor.z / 255
     )
-    
+
     local lightPos = self:GetPos() + self:GetForward() * 130
     local lightAng = self:GetAngles()
     lightAng:RotateAroundAxis(lightAng:Up(), 180)
 
-    self.ProjectedTexture:SetPos(lightPos)
-    self.ProjectedTexture:SetAngles(lightAng)
-    self.ProjectedTexture:SetColor(Color(
-        normalizedColor.x * 255,
-        normalizedColor.y * 255,
-        normalizedColor.z * 255
-    ))
-    self.ProjectedTexture:SetBrightness(brightness / 3)
-    self.ProjectedTexture:SetFarZ(distance)
-    
-    self.ProjectedTexture:Update()
+    local ok, err = pcall(function()
+        self.ProjectedTexture:SetPos(lightPos)
+        self.ProjectedTexture:SetAngles(lightAng)
+
+        self.ProjectedTexture:SetColor(Color(
+            normalizedColor.x * 255,
+            normalizedColor.y * 255,
+            normalizedColor.z * 255
+        ))
+
+        self.ProjectedTexture:SetBrightness(brightness / 3)
+        self.ProjectedTexture:SetFarZ(distance)
+
+        self.ProjectedTexture:Update()
+    end)
+
+    if not ok then
+        if self.ProjectedTexture then
+            self.ProjectedTexture:Remove()
+        end
+
+        self.ProjectedTexture = nil
+    end
 end
 
 function ENT:UpdateLight()

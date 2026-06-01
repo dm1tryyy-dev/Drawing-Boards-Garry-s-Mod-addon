@@ -245,7 +245,11 @@ if CLIENT then
             timer.Simple(0.005, DrawNextBatch)
         end
         
-        DrawNextBatch()
+        timer.Simple(0.05, function()
+            if IsValid(board) then
+                DrawNextBatch()
+            end
+        end)
     end
     
     function BoardSaveSystem.DrawBlur(panel, layers, density, alpha)

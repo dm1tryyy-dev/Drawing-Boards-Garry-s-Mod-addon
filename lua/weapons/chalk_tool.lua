@@ -211,6 +211,7 @@ function SWEP:Initialize()
 
     self.WasAttacking = false
     self.WasAttacking2 = false
+    self.ReloadPressed = false
 
     if CLIENT then
         -- Инициализация из общей конфигурации
@@ -295,17 +296,27 @@ function SWEP:SetPlayerColor(colorName)
 end
 
 function SWEP:GetNextColor()
-    -- Цвета в правильном порядке
-    local colors = ChalkMarkerConfig.ColorOrder.chalk or {"white", "yellow", "orange", "pink", "blue", "green"}
-    
-    -- Убедимся, что ColorIndex валиден
-    if not self.ColorIndex or self.ColorIndex < 1 or self.ColorIndex > #colors then
-        self.ColorIndex = 1
+    local colors = ChalkMarkerConfig.ColorOrder.chalk or {
+        "white",
+        "yellow",
+        "orange",
+        "pink",
+        "blue",
+        "green"
+    }
+
+    local currentColor = self:GetPlayerColor()
+    local currentIndex = 1
+
+    for i, color in ipairs(colors) do
+        if color == currentColor then
+            currentIndex = i
+            break
+        end
     end
-    
-    -- Используем сохраненный индекс
-    local nextIndex = (self.ColorIndex % #colors) + 1
-    
+
+    local nextIndex = (currentIndex % #colors) + 1
+
     return colors[nextIndex]
 end
 
@@ -492,19 +503,6 @@ function SWEP:UpdateEraseSizeFromServer(sizeName, sizeValue)
 end
 
 function SWEP:Reload()
-    local owner = self:GetOwner()
-    if IsValid(owner) and owner:KeyDown(IN_SPEED) then
-        return false
-    end
-    
-    -- R - быстрая смена цвета
-    if CurTime() >= (self.LastColorSwitch or 0) then
-        local nextColor = self:GetNextColor()
-        self:SetPlayerColor(nextColor)
-        self.LastColorSwitch = CurTime() + 0.5
-        return true
-    end
-    
     return false
 end
 
@@ -674,6 +672,23 @@ function SWEP:Think()
     
     local isAttacking = owner:KeyDown(IN_ATTACK)
     local isAttacking2 = owner:KeyDown(IN_ATTACK2)
+
+    local reloadDown = owner:KeyDown(IN_RELOAD)
+
+    if reloadDown and not self.ReloadPressed then
+
+        self.ReloadPressed = true
+
+        if SERVER and not owner:KeyDown(IN_SPEED) then
+            local nextColor = self:GetNextColor()
+            self:SetPlayerColor(nextColor)
+        end
+
+    elseif not reloadDown then
+
+        self.ReloadPressed = false
+
+    end
     
     -- Сброс флагов при отпускании кнопок
     if not isAttacking then
@@ -685,14 +700,14 @@ function SWEP:Think()
     end
     
     if owner:KeyDown(IN_SPEED) and owner:KeyPressed(IN_RELOAD) then
-        local tr = owner:GetEyeTrace()
-        local ent = tr.Entity  
-        if self:GetClass() == "chalk_tool" and IsValid(ent) and self:IsChalkboard(ent) then
-            if SERVER then
+        if CLIENT then
+            local tr = owner:GetEyeTrace()
+            local ent = tr.Entity  
+            if self:GetClass() == "chalk_tool" and IsValid(ent) and self:IsChalkboard(ent) then
                 RunConsoleCommand("chalk_clear")
             end
-            return
         end
+        return
     end
 
     if CLIENT then

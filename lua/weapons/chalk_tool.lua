@@ -13,7 +13,6 @@ if SERVER then
     util.AddNetworkString("ChalkSyncColorIndex")
     util.AddNetworkString("ChalkboardClear")
     util.AddNetworkString("ChalkboardClearPlayer")
-    util.AddNetworkString("ChalkMarkerUI_UpdateWeapon")
     util.AddNetworkString("ChalkMarkerUI_UpdateEraseSize")
     util.AddNetworkString("ChalkMarkerUI_SyncSize")
     util.AddNetworkString("ChalkMarkerUI_SyncEraseSize")
@@ -35,7 +34,6 @@ if SERVER then
         
         if IsValid(weapon) then
             weapon.ColorIndex = colorIndex
-
         end
     end)
 
@@ -47,31 +45,26 @@ if SERVER then
         local size = net.ReadUInt(8)
         local isNewLine = net.ReadBool()
         
-        -- Проверяем, что игрок имеет доступ
         if not IsValid(chalkboard) or not IsValid(ply) then return end
         
         local class = chalkboard:GetClass()
         if class ~= "chalkboard" and class ~= "chalkboard_oversized" then return end
         
-        -- ВАЖНО: получаем актуальный цвет из оружия игрока
         local weapon = ply:GetActiveWeapon()
         local actualColor = color
         
         if IsValid(weapon) and weapon:GetClass() == "chalk_tool" then
-            -- Используем цвет, сохраненный на сервере для этого игрока
             actualColor = weapon:GetDrawColor()
         end
         
-        -- Вызываем локально для сервера с правильным цветом
         if chalkboard.DrawOnBoard then
             chalkboard:DrawOnBoard(hitPos, actualColor, size, isNewLine, ply)
         end
         
-        -- Пересылаем всем с правильным цветом
         net.Start("ChalkDraw")
             net.WriteEntity(chalkboard)
             net.WriteVector(hitPos)
-            net.WriteColor(actualColor) -- Используем актуальный цвет
+            net.WriteColor(actualColor)
             net.WriteUInt(size,8)
             net.WriteBool(isNewLine)
             net.WriteEntity(ply)
@@ -90,7 +83,6 @@ if SERVER then
         local class = chalkboard:GetClass()
         if class ~= "chalkboard" and class ~= "chalkboard_oversized" then return end
         
-        -- Также вызываем локально для сервера
         if chalkboard.EraseOnBoard then
             chalkboard:EraseOnBoard(hitPos, size, isNewLine, ply)
         end
@@ -110,12 +102,10 @@ if SERVER then
         local ent = tr.Entity
         local class = ent:GetClass()
         if IsValid(ent) and (class == "chalkboard" or  class == "chalkboard_oversized") then
-            -- Очищаем локально на сервере
             if ent.ClearChalkboard then
                 ent:ClearChalkboard()
             end
             
-            -- Отправляем всем клиентам
             net.Start("ChalkboardClear")
                 net.WriteEntity(ent)
             net.SendPVS(ent:GetPos())
@@ -127,31 +117,28 @@ if SERVER then
     end)
     
     -- Обработчик очистки только своих рисунков
-    concommand.Add("chalk_clear_my", function(ply)
-        local tr = ply:GetEyeTrace()
-        local ent = tr.Entity
-        local class = ent:GetClass()
-        if IsValid(ent) and (class == "chalkboard" or  class == "chalkboard_oversized") then
-            if ent.ClearPlayerDrawings then
-                -- Очищаем локально на сервере
-                ent:ClearPlayerDrawings(ply)
+    -- concommand.Add("chalk_clear_self", function(ply)
+    --     local tr = ply:GetEyeTrace()
+    --     local ent = tr.Entity
+    --     local class = ent:GetClass()
+    --     if IsValid(ent) and (class == "chalkboard" or  class == "chalkboard_oversized") then
+    --         if ent.ClearPlayerDrawings then
+    --             ent:ClearPlayerDrawings(ply)
                 
-                -- Отправляем всем клиентам
-                net.Start("ChalkboardClearPlayer")
-                    net.WriteEntity(ent)
-                    net.WriteEntity(ply)
-                net.SendPVS(ent:GetPos())
+    --             net.Start("ChalkboardClearPlayer")
+    --                 net.WriteEntity(ent)
+    --                 net.WriteEntity(ply)
+    --             net.SendPVS(ent:GetPos())
                 
-                ply:ChatPrint("Your drawings cleared!")
-            else
-                ply:ChatPrint("This chalkboard doesn't support player-specific clearing")
-            end
-        else
-            ply:ChatPrint("Look at a chalkboard to clear your drawings!")
-        end
-    end)
+    --             ply:ChatPrint("Your drawings cleared!")
+    --         else
+    --             ply:ChatPrint("This chalkboard doesn't support player-specific clearing")
+    --         end
+    --     else
+    --         ply:ChatPrint("Look at a chalkboard to clear your drawings!")
+    --     end
+    -- end)
 end
-
 
 SWEP.Base = "weapon_base"
 SWEP.PrintName = "Chalk"
@@ -159,7 +146,6 @@ SWEP.Author = "Err0X1s"
 SWEP.Instructions = "LMB: Draw | RMB: Erase | R: Quick color change | T: Open menu"
 SWEP.Spawnable = true
 SWEP.AdminSpawnable = true
---SWEP.NoAnimations = true
 SWEP.Category = "Drawing Tools"
 SWEP.IconOverride = "vgui/entities/spawnicons/chalk_icon.png"
 SWEP.Slot = 5
@@ -203,24 +189,21 @@ end
 function SWEP:Initialize()
     self.ChalkMaterial = Material("models/tools_materials/chalk/Main")
     
-    -- Инициализация таблицы данных игроков
     if SERVER then
         self.PlayerData = {}
-        self.ColorIndex = 1 -- Инициализация индекса на сервере
+        self.ColorIndex = 1
     end
 
     self.WasAttacking = false
     self.WasAttacking2 = false
     self.ReloadPressed = false
+    self.NextDrawSend = 0
 
     if CLIENT then
-        -- Инициализация из общей конфигурации
         self.CurrentColor = self.CurrentColor or "white"
-        self.ColorIndex = 1 -- Инициализация индекса на клиенте
-        self.CurrentSizeValue = 7.0  -- Значение по умолчанию
-        self.CurrentEraseSizeValue = 15  -- Значение по умолчанию
-
-        -- Устанавливаем начальный цвет
+        self.ColorIndex = 1
+        self.CurrentSizeValue = 7.0
+        self.CurrentEraseSizeValue = 15.0
         self:SetChalkColor(self.CurrentColor)
     else
         self.CurrentColor = nil
@@ -243,7 +226,6 @@ function SWEP:GetPlayerColor()
         return self.CurrentColor or "white"
     end
     
-    -- SERVER
     local owner = self:GetOwner()
     if not IsValid(owner) then return "white" end
     
@@ -261,7 +243,6 @@ function SWEP:SetPlayerColor(colorName)
     local owner = self:GetOwner()
     if not IsValid(owner) then return end
     
-    -- Находим индекс цвета
     local colors = ChalkMarkerConfig.ColorOrder.chalk or {"white", "yellow", "orange", "pink", "blue", "green"}
     local foundIndex = 1
     for i, color in ipairs(colors) do
@@ -271,26 +252,19 @@ function SWEP:SetPlayerColor(colorName)
         end
     end
     
-    -- Обновляем индекс
     self.ColorIndex = foundIndex
     
     if SERVER then
-        -- Сохраняем на сервере
         local userid = owner:UserID()
         self.PlayerData[userid] = self.PlayerData[userid] or {}
         self.PlayerData[userid].color = colorName
         self.PlayerData[userid].colorIndex = foundIndex
-        
-        -- Синхронизируем с клиентом
         self:SyncColorToClient()
         self:SyncColorIndexToClient()
     else
-        -- Обновляем на клиенте
         self.CurrentColor = colorName
         self.ColorIndex = foundIndex
         self:SetChalkColor(colorName)
-        
-        -- СИНХРОНИЗИРУЕМ С СЕРВЕРОМ
         self:SyncColorToServer(colorName)
     end
 end
@@ -316,82 +290,13 @@ function SWEP:GetNextColor()
     end
 
     local nextIndex = (currentIndex % #colors) + 1
-
     return colors[nextIndex]
-end
-
-function SWEP:GetPlayerSize()
-    if CLIENT then
-        return self.CurrentSize or "medium"
-    end
-    
-    -- SERVER
-    local owner = self:GetOwner()
-    if not IsValid(owner) then return "medium" end
-    
-    local userid = owner:UserID()
-    local data = self.PlayerData[userid]
-    if not data then
-        data = {size = "medium"}
-        self.PlayerData[userid] = data
-    end
-    
-    return data.size or "medium"
-end
-
-function SWEP:SetPlayerSize(sizeName)
-    local owner = self:GetOwner()
-    if not IsValid(owner) then return end
-    
-    if SERVER then
-        local userid = owner:UserID()
-        self.PlayerData[userid] = self.PlayerData[userid] or {}
-        self.PlayerData[userid].size = sizeName
-    else
-        self.CurrentSize = sizeName
-        self.CurrentSizeValue = ChalkMarkerConfig.GetSizeValue("chalk", "draw", sizeName)
-    end
-end
-
-function SWEP:GetPlayerEraseSize()
-    if CLIENT then
-        return self.CurrentEraseSize or "medium"
-    end
-    
-    -- SERVER
-    local owner = self:GetOwner()
-    if not IsValid(owner) then return "medium" end
-    
-    local userid = owner:UserID()
-    local data = self.PlayerData[userid]
-    if not data then
-        data = {eraseSize = "medium"}
-        self.PlayerData[userid] = data
-    end
-    
-    return data.eraseSize or "medium"
-end
-
-function SWEP:SetPlayerEraseSize(sizeName)
-    local owner = self:GetOwner()
-    if not IsValid(owner) then return end
-    
-    if SERVER then
-        local userid = owner:UserID()
-        self.PlayerData[userid] = self.PlayerData[userid] or {}
-        self.PlayerData[userid].eraseSize = sizeName
-    else
-        self.CurrentEraseSize = sizeName
-        self.CurrentEraseSizeValue = ChalkMarkerConfig.GetSizeValue("chalk", "erase", sizeName)
-    end
 end
 
 function SWEP:GetDrawSizeValue()
     if CLIENT then
-        
         return self.CurrentSizeValue or 7.0
     else
-        -- SERVER
         local owner = self:GetOwner()
         if IsValid(owner) then
             local userid = owner:UserID()
@@ -421,7 +326,6 @@ end
 function SWEP:SetChalkColor(colorName)
     local colorData = ChalkMarkerConfig.GetColorData("chalk", colorName)
     
-    -- Обновляем локальную переменную на клиенте
     if CLIENT then
         self.CurrentColor = colorName
     end
@@ -522,7 +426,6 @@ function SWEP:GetDrawColor()
         end
         return ChalkMarkerConfig.GetDrawColor("chalk", currentColor)
     else
-        -- SERVER
         local owner = self:GetOwner()
         if not IsValid(owner) then return Color(240, 240, 230) end
         
@@ -537,8 +440,6 @@ function SWEP:GetDrawColor()
         return Color(240, 240, 230)
     end
 end
-
--- ========================================
 
 -- Настройки для VIEW модели
 SWEP.ViewModelOffset = Vector(22, 12, -2.5)
@@ -563,9 +464,7 @@ end
 function SWEP:DrawWorldModel()
     local owner = self:GetOwner()
     
-    -- Если оружие в руках игрока
     if IsValid(owner) then
-        -- КРИТИЧНО: обновляем кости перед получением матрицы
         owner:SetupBones()
         
         local bone = owner:LookupBone("ValveBiped.Bip01_R_Hand")
@@ -573,15 +472,12 @@ function SWEP:DrawWorldModel()
         if bone then
             local matrix = owner:GetBoneMatrix(bone)
             if matrix then
-                -- Получаем позицию и угол из матрицы кости
                 local pos = matrix:GetTranslation()
                 local ang = matrix:GetAngles()
                 
-                -- Применяем смещения с использованием локальных координат
                 local offsetPos = self.WorldModelOffset or Vector(7, 1, 0)
                 local offsetAng = self.WorldModelAngle or Angle(25, -10, -5)
                 
-                -- Конвертируем локальные смещения в мировые координаты
                 local newPos, newAng = LocalToWorld(
                     offsetPos, 
                     offsetAng, 
@@ -589,28 +485,17 @@ function SWEP:DrawWorldModel()
                     ang
                 )
                 
-                -- Устанавливаем позицию для отрисовки
                 self:SetRenderOrigin(newPos)
                 self:SetRenderAngles(newAng)
-                
-                -- КРИТИЧНО: принудительно обновляем кости модели оружия
                 self:SetupBones()
-                
-                -- Рисуем модель
                 self:DrawModel()
-                
-                -- Сбрасываем рендер позицию (важно для последующих кадров)
                 self:SetRenderOrigin()
                 self:SetRenderAngles()
-                
                 return
             end
         end
-        
-        -- Fallback если не нашли кость - используем стандартную отрисовку
         self:DrawModel()
     else
-        -- Если оружие на земле - стандартная отрисовка
         self:SetRenderOrigin(nil)
         self:SetRenderAngles(nil)
         self:DrawModel()
@@ -627,17 +512,18 @@ function SWEP:PrimaryAttack()
     
     local tr = owner:GetEyeTrace()
     
-    -- Проверка на chalkboard
     if IsValid(tr.Entity) and self:IsChalkboard(tr.Entity) then
         local sizeValue = self:GetDrawSizeValue()
         
-        net.Start("ChalkDraw")
-            net.WriteEntity(tr.Entity)
-            net.WriteVector(tr.HitPos)
-            net.WriteColor(self:GetDrawColor())
-            net.WriteUInt(sizeValue or 7,8)
-            net.WriteBool(true)
-        net.SendToServer()
+        if CLIENT then
+            net.Start("ChalkDraw")
+                net.WriteEntity(tr.Entity)
+                net.WriteVector(tr.HitPos)
+                net.WriteColor(self:GetDrawColor())
+                net.WriteUInt(sizeValue or 7,8)
+                net.WriteBool(true)
+            net.SendToServer()
+        end
     end
     
     self:SetNextPrimaryFire(CurTime() + 0.02)
@@ -650,16 +536,17 @@ function SWEP:SecondaryAttack()
     
     local tr = owner:GetEyeTrace()
     
-    -- Проверка на chalkboard
     if IsValid(tr.Entity) and self:IsChalkboard(tr.Entity) then
         local eraseSizeValue = self:GetEraseSizeValue()
         
-        net.Start("ChalkErase")
-            net.WriteEntity(tr.Entity)
-            net.WriteVector(tr.HitPos)
-            net.WriteUInt(eraseSizeValue or 12,8)
-            net.WriteBool(true)
-        net.SendToServer()
+        if CLIENT then
+            net.Start("ChalkErase")
+                net.WriteEntity(tr.Entity)
+                net.WriteVector(tr.HitPos)
+                net.WriteUInt(eraseSizeValue or 12,8)
+                net.WriteBool(true)
+            net.SendToServer()
+        end
     end
     
     self:SetNextSecondaryFire(CurTime() + 0.02)
@@ -672,25 +559,18 @@ function SWEP:Think()
     
     local isAttacking = owner:KeyDown(IN_ATTACK)
     local isAttacking2 = owner:KeyDown(IN_ATTACK2)
-
     local reloadDown = owner:KeyDown(IN_RELOAD)
 
     if reloadDown and not self.ReloadPressed then
-
         self.ReloadPressed = true
-
         if SERVER and not owner:KeyDown(IN_SPEED) then
             local nextColor = self:GetNextColor()
             self:SetPlayerColor(nextColor)
         end
-
     elseif not reloadDown then
-
         self.ReloadPressed = false
-
     end
     
-    -- Сброс флагов при отпускании кнопок
     if not isAttacking then
         self.WasAttacking = false
     end
@@ -711,7 +591,6 @@ function SWEP:Think()
     end
 
     if CLIENT then
-        -- КЛИЕНТ отправляет сообщения на сервер
         if isAttacking and CurTime() >= self:GetNextPrimaryFire() then
             local tr = owner:GetEyeTrace()
             
@@ -750,41 +629,23 @@ function SWEP:Think()
                 self.WasAttacking2 = true
             end
         end
-    else
-        -- СЕРВЕРНАЯ ЧАСТЬ
-        if isAttacking then
-            if CurTime() >= self:GetNextPrimaryFire() then
-                self:SetNextPrimaryFire(CurTime() + 0.01)
-                self.WasAttacking = true
-            end
-        end
-
-        if isAttacking2 then
-            if CurTime() >= self:GetNextSecondaryFire() then
-                self:SetNextSecondaryFire(CurTime() + 0.01)
-                self.WasAttacking2 = true
-            end
-        end
     end
 end
 
 function SWEP:OnRemove()
     if SERVER then
-        -- Очищаем данные игроков при удалении оружия
         self.PlayerData = {}
     end
 end
 
 function SWEP:OwnerChanged()
-    -- При смене владельца можно очистить старые данные
     if SERVER then
-        -- Оставляем только данные текущего владельца
         local owner = self:GetOwner()
         if IsValid(owner) then
             local userid = owner:UserID()
             local currentData = self.PlayerData[userid]
             self.PlayerData = {}
-            self.PlayerData[userid] = currentData or {color = "white", colorIndex = 1, size = "medium", eraseSize = "medium"}
+            self.PlayerData[userid] = currentData or {color = "white", colorIndex = 1}
         else
             self.PlayerData = {}
         end
@@ -806,13 +667,11 @@ if CLIENT then
         local colorName = net.ReadString()
         
         if IsValid(weapon) then
-            -- Обновляем локальную переменную на клиенте
             weapon.CurrentColor = colorName
             if weapon.SetChalkColor then
                 weapon:SetChalkColor(colorName)
             end
             
-            -- Также обновляем индекс на клиенте
             local colors = ChalkMarkerConfig.ColorOrder.chalk or {"white", "yellow", "orange", "pink", "blue", "green"}
             for i, color in ipairs(colors) do
                 if color == colorName then
@@ -822,10 +681,32 @@ if CLIENT then
             end
         end
     end)
+
+    net.Receive("ChalkDraw", function()
+        local chalkboard = net.ReadEntity()
+        local hitPos = net.ReadVector()
+        local color = net.ReadColor()
+        local size = net.ReadUInt(8)
+        local isNewLine = net.ReadBool()
+        
+        if IsValid(chalkboard) and chalkboard.DrawOnBoard then
+            chalkboard:DrawOnBoard(hitPos, color, size, isNewLine)
+        end
+    end)
+    
+    net.Receive("ChalkErase", function()
+        local chalkboard = net.ReadEntity()
+        local hitPos = net.ReadVector()
+        local size = net.ReadUInt(8)
+        local isNewLine = net.ReadBool()
+        
+        if IsValid(chalkboard) and chalkboard.EraseOnBoard then
+            chalkboard:EraseOnBoard(hitPos, size, isNewLine)
+        end
+    end)
 end
 
-
--- Сообщение с подсказками управления (HUD)
+-- HUD сообщения
 if CLIENT then
     local hintAlpha = 0
     local hintOffset = -300
@@ -915,29 +796,25 @@ if CLIENT then
             end
         end
         
-        -- НЕГАТИВНЫЙ ПРИЦЕЛ ЧЕРЕЗ OVERRIDEBLEND (ВСЕГДА ПОКАЗЫВАЕТСЯ)
         local isErasing = owner:KeyDown(IN_ATTACK2)
         local isDrawing = owner:KeyDown(IN_ATTACK)
         
         local centerX = ScrW() / 2
         local centerY = ScrH() / 2
         
-        -- Определяем радиус в зависимости от режима
         local radius
         if isErasing then
             radius = self:GetEraseSizeValue() or 15
-            -- radius = radius * 1.5 -- Увеличиваем для лучшей видимости
         elseif isDrawing then
             radius = self:GetDrawSizeValue() or 7
-            radius = radius * 1.5 -- Увеличиваем для лучшей видимости
+            radius = radius * 1.5
         else
-            radius = 20 -- Радиус по умолчанию когда ничего не нажато
+            radius = 20
         end
         
-        local dotRadius = 5 -- Статический радиус центрального круга
-        local thickness = 3 -- Толщина кольца
+        local dotRadius = 5
+        local thickness = 3
         
-        -- Кэшируем геометрию прицела
         local cacheKey = radius .. "_" .. ScrW() .. "_" .. ScrH()
         if not self.ReticleCacheKey or self.ReticleCacheKey ~= cacheKey then
             self.ReticleCacheKey = cacheKey
@@ -948,7 +825,6 @@ if CLIENT then
             local angleStep = (2 * math.pi) / segments
             local innerRadius = radius - thickness
             
-            -- Кэшируем кольцо
             local outerPoints = {}
             local innerPoints = {}
             
@@ -976,7 +852,6 @@ if CLIENT then
                 })
             end
             
-            -- Кэшируем центральный круг
             for i = 0, segments do
                 local angle = i * angleStep
                 table.insert(self.DotPolyCache, {
@@ -987,42 +862,33 @@ if CLIENT then
         end
         
         draw.NoTexture()
-        
-        -- Включаем режим инверсии
         render.OverrideBlend(true, BLEND_ONE_MINUS_DST_COLOR, BLEND_ZERO, BLENDFUNC_ADD)
-        
         surface.SetDrawColor(255, 255, 255, 255)
         
-        -- Рисуем кольцо
         if self.RingPolyCache then
             for _, poly in ipairs(self.RingPolyCache) do
                 surface.DrawPoly(poly)
             end
         end
         
-        -- Рисуем центральный круг
         if self.DotPolyCache then
             surface.DrawPoly(self.DotPolyCache)
         end
         
-        -- Выключаем инверсию
         render.OverrideBlend(false)
     end
     
-    -- Сбрасываем флаг при убирании оружия
     function SWEP:Holster()
         isShowingHint = false
         return true
     end
     
-    -- Также сбрасываем при смерти
     hook.Add("PlayerDeath", "ResetChalkHint", function(ply)
         if ply == LocalPlayer() then
             isShowingHint = false
         end
     end)
     
-    -- И при спавне
     hook.Add("PlayerSpawn", "ResetChalkHintSpawn", function(ply)
         if ply == LocalPlayer() then
             isShowingHint = false
@@ -1030,7 +896,6 @@ if CLIENT then
     end)
 end
 
--- Отключаем стандартный прицел когда оружие активно
 hook.Add("HUDShouldDraw", "ChalkTool_HideDefaultCrosshair", function(name)
     if name == "CHudCrosshair" then
         local ply = LocalPlayer()

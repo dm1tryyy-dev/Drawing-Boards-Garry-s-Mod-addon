@@ -20,13 +20,13 @@ end
 
 if SERVER then
     util.AddNetworkString("MarkerDraw")
-    util.AddNetworkString("MarkerErase") 
+    util.AddNetworkString("MarkerErase")
     util.AddNetworkString("MarkerColorUpdate")
     util.AddNetworkString("ChalkMarkerUI_UpdateWeapon")
     util.AddNetworkString("MarkerSyncColor")
     util.AddNetworkString("MarkerSyncColorIndex")
     util.AddNetworkString("WhiteboardClear")
-
+    util.AddNetworkString("WhiteboardClearPlayer")
     util.AddNetworkString("ChalkMarkerUI_UpdateEraseSize")
     util.AddNetworkString("ChalkMarkerUI_SyncSize")
     util.AddNetworkString("ChalkMarkerUI_SyncEraseSize")
@@ -135,27 +135,27 @@ if SERVER then
     end)
 
     -- Обработчик очистки только своих рисунков
-    concommand.Add("marker_clear_my", function(ply)
-        local tr = ply:GetEyeTrace()
-        local ent = tr.Entity
-        local class = ent:GetClass()
-        if IsValid(ent) and (class == "whiteboard" or class == "little_whiteboard" or class == "whiteboard_oversized") then
-            if ent.ClearPlayerDrawings then
-                ent:ClearPlayerDrawings(ply)
+    -- concommand.Add("marker_clear_self", function(ply)
+    --     local tr = ply:GetEyeTrace()
+    --     local ent = tr.Entity
+    --     local class = ent:GetClass()
+    --     if IsValid(ent) and (class == "whiteboard" or class == "little_whiteboard" or class == "whiteboard_oversized") then
+    --         if ent.ClearPlayerDrawings then
+    --             ent:ClearPlayerDrawings(ply)
                 
-                net.Start("WhiteboardClearPlayer")
-                    net.WriteEntity(ent)
-                    net.WriteEntity(ply)
-                net.SendPVS(ent:GetPos())
+    --             net.Start("WhiteboardClearPlayer")
+    --                 net.WriteEntity(ent)
+    --                 net.WriteEntity(ply)
+    --             net.SendPVS(ent:GetPos())
                 
-                ply:ChatPrint("Your drawings cleared!")
-            else
-                ply:ChatPrint("This whiteboard doesn't support player-specific clearing")
-            end
-        else
-            ply:ChatPrint("Look at a whiteboard to clear your drawings!")
-        end
-    end)
+    --             ply:ChatPrint("Your drawings cleared!")
+    --         else
+    --             ply:ChatPrint("This whiteboard doesn't support player-specific clearing")
+    --         end
+    --     else
+    --         ply:ChatPrint("Look at a whiteboard to clear your drawings!")
+    --     end
+    -- end)
 end
 
 SWEP.Base = "weapon_base"
@@ -228,6 +228,7 @@ function SWEP:Initialize()
     self.WasAttacking = false
     self.WasAttacking2 = false
     self.ReloadPressed = false
+    self.NextDrawSend = 0
 
     if CLIENT then
         self.CurrentColor = self.CurrentColor or "black"
@@ -279,6 +280,7 @@ function SWEP:SetPlayerColor(colorName)
         colorName,
         math.floor(SysTime() * 1000)
     )
+    
     if not IsValid(owner) then return end
     
     local colors = ChalkMarkerConfig.ColorOrder.marker or {"black", "red", "blue", "green", "yellow", "orange", "cyan", "purple", "pink", "brown"}
@@ -303,6 +305,7 @@ function SWEP:SetPlayerColor(colorName)
         self.CurrentColor = colorName
         self.ColorIndex = foundIndex
         self:SetMarkerColor(colorName)
+        self:SyncColorToServer(colorName)
     end
 end
 
@@ -551,15 +554,11 @@ function SWEP:Think()
     
     local isAttacking = owner:KeyDown(IN_ATTACK)
     local isAttacking2 = owner:KeyDown(IN_ATTACK2)
-
     local reloadDown = owner:KeyDown(IN_RELOAD)
 
     if reloadDown and not self.ReloadPressed then
-
         self.ReloadPressed = true
-
         if SERVER and not owner:KeyDown(IN_SPEED) then
-
             local currentColor = self:GetPlayerColor()
             local nextColor = self:GetNextColor()
 
@@ -576,11 +575,8 @@ function SWEP:Think()
 
             self:SetPlayerColor(nextColor)
         end
-
     elseif not reloadDown then
-
         self.ReloadPressed = false
-
     end
     
     if not isAttacking then self.WasAttacking = false end
@@ -760,9 +756,13 @@ if CLIENT then
         local isDrawing = owner:KeyDown(IN_ATTACK)
         local centerX, centerY = ScrW() / 2, ScrH() / 2
         local radius
-        if isErasing then radius = self:GetEraseSizeValue() or 15
-        elseif isDrawing then radius = (self:GetDrawSizeValue() or 7) * 1.5
-        else radius = 20 end
+        if isErasing then 
+            radius = self:GetEraseSizeValue() or 15
+        elseif isDrawing then 
+            radius = (self:GetDrawSizeValue() or 7) * 1.5
+        else 
+            radius = 20 
+        end
         
         local dotRadius, thickness = 5, 3
         local cacheKey = radius .. "_" .. ScrW() .. "_" .. ScrH()
@@ -790,8 +790,14 @@ if CLIENT then
         draw.NoTexture()
         render.OverrideBlend(true, BLEND_ONE_MINUS_DST_COLOR, BLEND_ZERO, BLENDFUNC_ADD)
         surface.SetDrawColor(255, 255, 255, 255)
-        if self.RingPolyCache then for _, poly in ipairs(self.RingPolyCache) do surface.DrawPoly(poly) end end
-        if self.DotPolyCache then surface.DrawPoly(self.DotPolyCache) end
+        if self.RingPolyCache then 
+            for _, poly in ipairs(self.RingPolyCache) do 
+                surface.DrawPoly(poly) 
+            end 
+        end
+        if self.DotPolyCache then 
+            surface.DrawPoly(self.DotPolyCache) 
+        end
         render.OverrideBlend(false)
     end
     

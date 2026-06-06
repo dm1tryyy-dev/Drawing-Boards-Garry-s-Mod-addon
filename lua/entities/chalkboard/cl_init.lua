@@ -1,5 +1,20 @@
 include("shared.lua")
 
+-- -- Клиентские ConVar для синхронизации
+-- CreateClientConVar("db_opt_limit_enabled", "1", true, false)
+-- CreateClientConVar("db_opt_limit_max", "45000", true, false)
+
+-- Обработчик синхронизации
+-- net.Receive("DBPointLimit_Sync", function()
+--     local enabled = net.ReadBool()
+--     local maxPoints = net.ReadInt(32)
+    
+--     RunConsoleCommand("db_opt_limit_enabled", enabled and "1" or "0")
+--     RunConsoleCommand("db_opt_limit_max", tostring(maxPoints))
+    
+--     print("[DB] Point limit synced: enabled=" .. tostring(enabled) .. ", max=" .. tostring(maxPoints))
+-- end)
+
 chalkboardRTs = chalkboardRTs or {}
 local DRAW_DISTANCE = 200
 local MAX_DRAW_DISTANCE_SQ = DRAW_DISTANCE * DRAW_DISTANCE
@@ -333,6 +348,31 @@ function ENT:FlushDrawQueue()
     self:DrawPointsOnRT(pointsToDraw)
 end
 
+function ENT:RemoveOldestPoint()
+
+    if not self.drawPointsBuffer then return end
+
+    local oldest = table.remove(self.drawPointsBuffer, 1)
+
+    if not oldest then return end
+
+    oldest.__removed = true
+
+    local playerPoints = self.PlayerDrawData[oldest.playerID]
+
+    if playerPoints then
+        for k, v in ipairs(playerPoints) do
+            if v == oldest then
+                table.remove(playerPoints, k)
+                break
+            end
+        end
+    end
+
+    self:ForceRedraw()
+
+end
+
 function ENT:DrawOnBoard(hitPos, color, size, isNewLine, player)
     if not IsValid(self) then return end
     
@@ -395,6 +435,14 @@ function ENT:DrawOnBoard(hitPos, color, size, isNewLine, player)
             __order = self.pointCounter
         }
         
+        if DB_LIMIT_ENABLED then
+            local maxPoints = math.max(DB_LIMIT_MAX, 1)
+
+            while #self.drawPointsBuffer >= maxPoints do
+                self:RemoveOldestPoint()
+            end
+        end
+
         self:AddPointToGrid(newPoint)
         table.insert(self.drawPointsBuffer, newPoint)
         table.insert(self.PlayerDrawData[playerID], newPoint)

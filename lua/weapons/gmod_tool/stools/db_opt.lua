@@ -10,8 +10,11 @@ if CLIENT then
     language.Add("tool.db_opt.0", "Board Options")
 end
 
+-- ConVar для настроек (префикс db_opt_ добавляется автоматически)
 TOOL.ClientConVar = {
-    ["render_qlt"] = "2"
+    ["render_qlt"] = "2",
+    ["limit_enabled"] = "0",
+    ["limit_max"] = "45000"
 }
 
 function TOOL:LeftClick(trace)
@@ -415,22 +418,10 @@ function TOOL.BuildCPanel(CPanel)
     lowQualityCheckbox:SetTextColor(Color(255, 255, 255))
     
     -- Загружаем сохраненное значение
-    local isLowQuality = false
-    if file.Exists("db_render_quality_low.txt", "DATA") then
-        isLowQuality = tobool(file.Read("db_render_quality_low.txt", "DATA")) or false
-    end
+    local isLowQuality = GetConVarNumber("db_opt_render_qlt") == 1
     lowQualityCheckbox:SetValue(isLowQuality)
     
-    -- Устанавливаем конвар
-    RunConsoleCommand("db_opt_render_qlt", isLowQuality and "1" or "2")
-    cvars.AddChangeCallback("db_opt_render_qlt", function(name, old, new)
-        if IsValid(lowQualityCheckbox) then
-            lowQualityCheckbox:SetValue(new == "1")
-        end
-    end)
-    
     lowQualityCheckbox.OnChange = function(self, value)
-        file.Write("db_render_quality_low.txt", tostring(value))
         RunConsoleCommand("db_opt_render_qlt", value and "1" or "2")
         print("[DB] Low Quality Mode: " .. (value and "Enabled (512x512)" or "Disabled (1024x1024)"))
     end
@@ -439,5 +430,102 @@ function TOOL.BuildCPanel(CPanel)
     CPanel:ControlHelp("")
     CPanel:ControlHelp("  Enable = 512x512 (better FPS)")
     CPanel:ControlHelp("  Disable = 1024x1024 (default)")
+    CPanel:ControlHelp("")
+    CPanel:ControlHelp("")
+    CPanel:ControlHelp("Board Points Limit")
+    -- ============ НАСТРОЙКИ ЛИМИТА ТОЧЕК НА ДОСКЕ ============
+    CPanel:ControlHelp("")
+    -- Проверка прав доступа
+    local hasAccess = false
+    if game.SinglePlayer() then
+        hasAccess = true
+    elseif IsValid(LocalPlayer()) and LocalPlayer():IsAdmin() then
+        hasAccess = true
+    end
+    
+    if not hasAccess then
+        CPanel:AddControl("Label", {
+            Text = "These settings are only available to server administrators.\nCommands in the client console don't work."
+        })
+        CPanel:ControlHelp("")
+    else
+        local limitEnabled = DB_LIMIT_ENABLED or false
+        local limitMax = DB_LIMIT_MAX or 45000
+
+        -- Галочка для включения/выключения лимита
+        local limitCheckbox = vgui.Create("DCheckBoxLabel")
+        DB_LimitCheckbox = limitCheckbox
+        limitCheckbox:SetText("Enable Point Limit on Boards")
+        limitCheckbox:SetIndent(5)
+        limitCheckbox:SetTall(30)
+        limitCheckbox:SetTextColor(Color(255, 255, 255))
+        limitCheckbox:SetValue(limitEnabled)
+        
+        -- Поле для ввода числа
+        CPanel:AddControl("Label", {
+            Text = "Maximum Points per Board:"
+        })
+        
+        local numberWang = vgui.Create("DNumberWang")
+        DB_LimitNumberWang = numberWang
+        numberWang:SetMin(100)
+        numberWang:SetMax(500000)
+        numberWang:SetValue(limitMax)
+        numberWang:SetTall(25)
+        numberWang:SetEnabled(limitEnabled)
+        
+        -- Обработчик изменения галочки
+        limitCheckbox.OnChange = function(self, value)
+            if DB_LIMIT_SYNCING then return end
+            numberWang:SetEnabled(value)
+            net.Start("DBPointLimit_SetEnabled")
+                net.WriteBool(value)
+            net.SendToServer()
+        end
+        
+        local updatingNumberWang = false
+        numberWang.OnValueChanged = function(self, value)
+            if DB_LIMIT_SYNCING then return end
+            if updatingNumberWang then return end
+
+            local intValue = math.Clamp(
+                math.floor(tonumber(value) or 100),
+                100,
+                500000
+            )
+
+            if game.SinglePlayer() then
+                RunConsoleCommand(
+                    "db_opt_limit_max",
+                    tostring(intValue)
+                )
+            else
+                net.Start("DBPointLimit_SetMax")
+                    net.WriteInt(intValue, 32)
+                net.SendToServer()
+            end
+        end
+        numberWang.OnLoseFocus = function(self)
+
+            local intValue = math.Clamp(
+                math.floor(self:GetValue()),
+                100,
+                500000
+            )
+
+            updatingNumberWang = true
+            self:SetValue(intValue)
+            updatingNumberWang = false
+        end
+        
+        CPanel:AddItem(limitCheckbox)
+        CPanel:AddItem(numberWang)
+        CPanel:ControlHelp("")
+        CPanel:ControlHelp("When limit is reached, oldest points are removed automatically")
+        CPanel:ControlHelp("Console commands:")
+        CPanel:ControlHelp("  db_opt_limit_enabled 0/1")
+        CPanel:ControlHelp("  db_opt_limit_max [number]")
+
+    end
     CPanel:ControlHelp("")
 end

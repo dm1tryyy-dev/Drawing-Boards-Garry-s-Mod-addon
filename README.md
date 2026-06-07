@@ -14,4 +14,9 @@ Featuring three beautifully crafted board types and intuitive drawing tools, thi
 ![20251027173719_2](https://github.com/user-attachments/assets/15579b7b-89ed-450a-9ee1-945b6fce487b)
 
 ------------------------------------------------------------------------------
+
+## Licensing
+* **Source Code:** Distributed under the **Apache License 2.0**. You are free to use, modify, and distribute the code under the terms of this license.
+* **3D Models & Textures:** **All rights reserved by the author (© 2026 Err0X1s).** The 3D models (`.mdl`), materials (`.vmt`, `.vtf`), and texture assets contained in this project are NOT covered by the Apache 2.0 license. Re-uploading, modifying, or using these visual assets in other public workshops or server content packs without explicit permission is strictly prohibited.
+* 
 All models and some textures is created by dm1itryy-dev in program Blender 4.0 and Adobe Photoshop

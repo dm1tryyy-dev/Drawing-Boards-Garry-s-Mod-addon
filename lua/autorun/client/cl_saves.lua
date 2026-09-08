@@ -39,7 +39,7 @@ if CLIENT then
     
     BoardSaveSystem.WeaponToBoards = {
         ["chalk"] = {"chalkboard", "chalkboard_oversized"},
-        ["marker"] = {"whiteboard", "whiteboard_oversized", "little_whiteboard"}
+        ["marker"] = {"whiteboard", "whiteboard_oversized", "little_whiteboard", "tech_panel", "tech_panel_oversized"}
     }
     
     surface.CreateFont("BoardSave_Title", {font = "Verdana", size = 22, weight = 700, antialias = true})
@@ -183,19 +183,23 @@ if CLIENT then
         
         local rtData = nil
         local entIndex = board:EntIndex()
-        if not rtData and chalkboardRTs then rtData = chalkboardRTs[entIndex] end
+        
+        -- Проверяем все возможные RT хранилища
+        if chalkboardRTs then rtData = chalkboardRTs[entIndex] end
         if not rtData and chalkboardOSRTs then rtData = chalkboardOSRTs[entIndex] end
         if not rtData and whiteboardRTs then rtData = whiteboardRTs[entIndex] end
         if not rtData and whiteboardOSRTs then rtData = whiteboardOSRTs[entIndex] end
         if not rtData and littleWhiteboardRTs then rtData = littleWhiteboardRTs[entIndex] end
+        -- ДОБАВЛЯЕМ ПРОВЕРКУ ДЛЯ TECH_PANEL
+        if not rtData and TechPanelRTs then rtData = TechPanelRTs[entIndex] end
         
         if not rtData or not rtData.rt then
-            notification.AddLegacy("No RT found!", NOTIFY_ERROR, 3)
+            notification.AddLegacy("No RT found for " .. board:GetClass() .. "!", NOTIFY_ERROR, 3)
             board._loadingSave = false
             return
         end
         
-        -- НЕ очищаем RT если merge (чтобы не стереть первую загрузку)
+        -- НЕ очищаем RT если merge
         if not merge then
             render.PushRenderTarget(rtData.rt)
             render.Clear(0, 0, 0, 0)
@@ -215,9 +219,15 @@ if CLIENT then
             if not IsValid(board) then return end
             if currentBatch > totalBatches then
                 board._loadingSave = false
-                if board.UpdateChalkboardMaterial then board:UpdateChalkboardMaterial() end
-                if board.UpdateWhiteboardMaterial then board:UpdateWhiteboardMaterial() end
-                if board.UpdateLittleWhiteboardMaterial then board:UpdateLittleWhiteboardMaterial() end
+                if board.UpdateTechPanelMaterial then 
+                    board:UpdateTechPanelMaterial() 
+                elseif board.UpdateChalkboardMaterial then 
+                    board:UpdateChalkboardMaterial() 
+                elseif board.UpdateWhiteboardMaterial then 
+                    board:UpdateWhiteboardMaterial() 
+                elseif board.UpdateLittleWhiteboardMaterial then 
+                    board:UpdateLittleWhiteboardMaterial() 
+                end
                 
                 if #board._loadQueue > 0 then
                     local nextLoad = table.remove(board._loadQueue, 1)
@@ -238,8 +248,11 @@ if CLIENT then
                 table.insert(board.drawQueue, batchPoints[i])
             end
             
-            if board.FlushDrawQueue then board:FlushDrawQueue()
-            elseif board.DrawPointsOnRT then board:DrawPointsOnRT(board.drawQueue) end
+            if board.FlushDrawQueue then 
+                board:FlushDrawQueue()
+            elseif board.DrawPointsOnRT then 
+                board:DrawPointsOnRT(board.drawQueue) 
+            end
             
             currentBatch = currentBatch + 1
             timer.Simple(0.005, DrawNextBatch)
@@ -442,7 +455,7 @@ if CLIENT then
         local eyeTrace = ply:GetEyeTrace()
         if not eyeTrace.Hit or not eyeTrace.Entity then return nil end
         local entClass = eyeTrace.Entity:GetClass()
-        local allBoardClasses = {"chalkboard", "chalkboard_oversized", "whiteboard", "whiteboard_oversized", "little_whiteboard"}
+        local allBoardClasses = {"chalkboard", "chalkboard_oversized", "whiteboard", "whiteboard_oversized", "little_whiteboard", "tech_panel", "tech_panel_oversized"}
         for _, class in ipairs(allBoardClasses) do
             if entClass == class then return eyeTrace.Entity end
         end

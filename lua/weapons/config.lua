@@ -391,7 +391,6 @@ function ChalkMarkerConfig.GetNextColor(weaponType, currentColor)
     return order[nextIndex]
 end
 
--- Добавляем эту функцию в конец config.lua:
 -- if CLIENT then
 --     -- Функция для принудительного обновления слайдеров
 --     function ChalkMarkerConfig.UpdateSizeSliders(weaponType, drawValue, eraseValue)
@@ -520,20 +519,20 @@ end
 
 -- ============ ФИКС СИНХРОНИЗАЦИИ РАЗМЕРОВ ============
 if CLIENT then
-    -- Переопределяем обработчик синхронизации размера рисования
+    -- обработчик синхронизации размера рисования
     net.Receive("ChalkMarkerUI_SyncSize", function()
         local weapon = net.ReadEntity()
-        local sizeValue = net.ReadFloat()  -- ИСПРАВЛЕНО: ReadFloat вместо ReadUInt
+        local sizeValue = net.ReadFloat() 
         
         if IsValid(weapon) then
             weapon.CurrentSizeValue = sizeValue
         end
     end)
     
-    -- Переопределяем обработчик синхронизации размера стирания
+    --  обработчик синхронизации размера стирания
     net.Receive("ChalkMarkerUI_SyncEraseSize", function()
         local weapon = net.ReadEntity()
-        local sizeValue = net.ReadFloat()  -- ИСПРАВЛЕНО: ReadFloat вместо ReadUInt
+        local sizeValue = net.ReadFloat()
         
         if IsValid(weapon) then
             weapon.CurrentEraseSizeValue = sizeValue

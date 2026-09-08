@@ -31,6 +31,9 @@ if SERVER then
     util.AddNetworkString("ChalkMarkerUI_SyncSize")
     util.AddNetworkString("ChalkMarkerUI_SyncEraseSize")
 
+    -- Таблица для отслеживания времени последней очистки
+    local lastClearTime = {}
+
     -- Обработчик синхронизации цвета
     net.Receive("MarkerSyncColor", function(len, ply)
         local colorName = net.ReadString()
@@ -63,7 +66,9 @@ if SERVER then
         
         local isSupported = whiteboard:GetClass() == "whiteboard" or 
                            whiteboard:GetClass() == "little_whiteboard" or
-                           whiteboard:GetClass() == "whiteboard_oversized"
+                           whiteboard:GetClass() == "whiteboard_oversized" or
+                           whiteboard:GetClass() == "tech_panel" or
+                           whiteboard:GetClass() == "tech_panel_oversized"
         if not isSupported then return end
         
         local weapon = ply:GetActiveWeapon()
@@ -98,7 +103,9 @@ if SERVER then
         
         local isSupported = whiteboard:GetClass() == "whiteboard" or 
                            whiteboard:GetClass() == "little_whiteboard" or
-                           whiteboard:GetClass() == "whiteboard_oversized"
+                           whiteboard:GetClass() == "whiteboard_oversized" or 
+                           whiteboard:GetClass() == "tech_panel" or
+                           whiteboard:GetClass() == "tech_panel_oversized"
         if not isSupported then return end
         
         if whiteboard.EraseOnBoard then
@@ -116,21 +123,41 @@ if SERVER then
 
     -- Обработчик очистки всей доски
     concommand.Add("marker_clear", function(ply)
+        if not IsValid(ply) then return end
+        
+        -- Защита от множественных срабатываний
+        local currentTime = CurTime()
+        local lastTime = lastClearTime[ply:SteamID()] or 0
+        
+        if currentTime - lastTime < 1.0 then
+            return -- Игнорируем повторные вызовы в течение 1 секунды
+        end
+        
+        lastClearTime[ply:SteamID()] = currentTime
+        
         local tr = ply:GetEyeTrace()
         local ent = tr.Entity
         local class = ent:GetClass()
-        if IsValid(ent) and (class == "whiteboard" or class == "little_whiteboard" or class == "whiteboard_oversized") then
+        if IsValid(ent) and (class == "whiteboard" or class == "little_whiteboard" or class == "whiteboard_oversized" or class == "tech_panel" or class == "tech_panel_oversized") then
             if ent.ClearWhiteboard then
                 ent:ClearWhiteboard()
+            elseif ent.ClearTechPanel then
+                ent:ClearTechPanel()
             end
             
             net.Start("WhiteboardClear")
                 net.WriteEntity(ent)
             net.SendPVS(ent:GetPos())
             
-            ply:ChatPrint("Whiteboard cleared!")
+            -- Определяем тип доски для сообщения
+            local boardType = "Whiteboard"
+            if class == "tech_panel" or class == "tech_panel_oversized" then
+                boardType = "Tech Panel"
+            end
+            
+            ply:ChatPrint(boardType .. " cleared!")
         else
-            ply:ChatPrint("Look at a whiteboard to clear it!")
+            ply:ChatPrint("Look at a whiteboard or tech panel to clear it!")
         end
     end)
 
@@ -139,7 +166,7 @@ if SERVER then
     --     local tr = ply:GetEyeTrace()
     --     local ent = tr.Entity
     --     local class = ent:GetClass()
-    --     if IsValid(ent) and (class == "whiteboard" or class == "little_whiteboard" or class == "whiteboard_oversized") then
+    --     if IsValid(ent) and (class == "whiteboard" or class == "little_whiteboard" or class == "whiteboard_oversized" or class == "tech_panel" or class == "tech_panel_oversized") then
     --         if ent.ClearPlayerDrawings then
     --             ent:ClearPlayerDrawings(ply)
                 
@@ -150,10 +177,10 @@ if SERVER then
                 
     --             ply:ChatPrint("Your drawings cleared!")
     --         else
-    --             ply:ChatPrint("This whiteboard doesn't support player-specific clearing")
+    --             ply:ChatPrint("This board doesn't support player-specific clearing")
     --         end
     --     else
-    --         ply:ChatPrint("Look at a whiteboard to clear your drawings!")
+    --         ply:ChatPrint("Look at a whiteboard or tech panel to clear your drawings!")
     --     end
     -- end)
 end
@@ -195,7 +222,9 @@ SWEP.Secondary.Ammo = "none"
 SWEP.SupportedBoards = {
     "whiteboard",
     "little_whiteboard",
-    "whiteboard_oversized"
+    "whiteboard_oversized",
+    "tech_panel",
+    "tech_panel_oversized"
 }
 
 SWEP.CurrentColor = "black"
@@ -229,6 +258,7 @@ function SWEP:Initialize()
     self.WasAttacking2 = false
     self.ReloadPressed = false
     self.NextDrawSend = 0
+    self.LastClearTime = 0 -- Для отслеживания времени последней очистки
 
     if CLIENT then
         self.CurrentColor = self.CurrentColor or "black"
@@ -582,8 +612,16 @@ function SWEP:Think()
     if not isAttacking then self.WasAttacking = false end
     if not isAttacking2 then self.WasAttacking2 = false end
     
+    -- Защита от множественных срабатываний очистки
     if owner:KeyDown(IN_SPEED) and owner:KeyPressed(IN_RELOAD) then
         if CLIENT then
+            local currentTime = CurTime()
+            if currentTime - self.LastClearTime < 1.0 then
+                return -- Игнорируем повторные вызовы
+            end
+            
+            self.LastClearTime = currentTime
+            
             local tr = owner:GetEyeTrace()
             local ent = tr.Entity
             if IsValid(ent) and self:IsSupportedBoard(ent) then
@@ -711,9 +749,10 @@ if CLIENT then
         local hints = {
             "LMB: Draw",
             "RMB: Erase", 
-            "SHIFT+R: Full Clear (only whiteboard and little whiteboard)",
+            "SHIFT+R: Full Clear (whiteboard and tech panel)",
             "R: Quick Change Color",
-            "T: Tool Menu (you can assign another key)"
+            "T: Tool Menu (you can assign another key)",
+            "F2: Save drawings / F3: Load drawings (open special menu)"
         }
         
         surface.SetFont("HudSelectionText")

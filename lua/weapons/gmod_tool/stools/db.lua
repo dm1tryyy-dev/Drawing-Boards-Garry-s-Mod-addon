@@ -24,7 +24,7 @@ local BoardTypes = {
         limit_name = "whiteboards",
         display_name = "Whiteboard"
     },
-    ["little whiteboard"] = {
+    ["little_whiteboard"] = {
         model = "models/boards/little_whiteboard/little_whiteboard.mdl",
         class = "little_whiteboard",
         static = false,
@@ -32,6 +32,24 @@ local BoardTypes = {
         floor_offset = 5,
         limit_name = "little_whiteboards",
         display_name = "Little Whiteboard"
+    },
+    ["tech_panel"] = {
+        model = "models/boards/tech_panel/tech_panel.mdl",
+        class = "tech_panel",
+        static = true,
+        has_light = true,
+        wall_offset = 1.0,
+        limit_name = "techpanels",
+        display_name = "Tech Panel"
+    },
+    ["tech_panel_oversized"] = {
+        model = "models/boards/tech_panel/oversized/tech_panel_oversized.mdl",
+        class = "tech_panel_oversized",
+        static = true,
+        has_light = true,
+        wall_offset = 1.0,
+        limit_name = "techpanels_os",
+        display_name = "Oversized Tech Panel"
     },
     ["chalkboard_oversized"] = {
         model = "models/boards/chalkboard/oversized/chalkboard_oversized.mdl",
@@ -57,7 +75,9 @@ local BoardTypes = {
 local BoardOrder = {
     "chalkboard",
     "whiteboard",
-    "little whiteboard",
+    "little_whiteboard",
+    "tech_panel",
+    "tech_panel_oversized",
     "chalkboard_oversized",
     "whiteboard_oversized"
 }

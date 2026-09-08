@@ -17,6 +17,9 @@ if SERVER then
     util.AddNetworkString("ChalkMarkerUI_SyncSize")
     util.AddNetworkString("ChalkMarkerUI_SyncEraseSize")
 
+    -- Таблица для отслеживания времени последней очистки
+    local lastClearTime = {}
+
     -- Обработчик синхронизации цвета
     net.Receive("ChalkSyncColor", function(len, ply)
         local colorName = net.ReadString()
@@ -98,6 +101,18 @@ if SERVER then
     
     -- Обработчик очистки всей доски
     concommand.Add("chalk_clear", function(ply)
+        if not IsValid(ply) then return end
+        
+        -- Защита от множественных срабатываний
+        local currentTime = CurTime()
+        local lastTime = lastClearTime[ply:SteamID()] or 0
+        
+        if currentTime - lastTime < 1.0 then
+            return -- Игнорируем повторные вызовы в течение 1 секунды
+        end
+        
+        lastClearTime[ply:SteamID()] = currentTime
+        
         local tr = ply:GetEyeTrace()
         local ent = tr.Entity
         local class = ent:GetClass()
@@ -198,6 +213,7 @@ function SWEP:Initialize()
     self.WasAttacking2 = false
     self.ReloadPressed = false
     self.NextDrawSend = 0
+    self.LastClearTime = 0
 
     if CLIENT then
         self.CurrentColor = self.CurrentColor or "white"
@@ -557,6 +573,10 @@ function SWEP:Think()
     local owner = self:GetOwner()
     if not IsValid(owner) then return end
     
+    if not self.LastClearTime then
+        self.LastClearTime = 0
+    end
+    
     local isAttacking = owner:KeyDown(IN_ATTACK)
     local isAttacking2 = owner:KeyDown(IN_ATTACK2)
     local reloadDown = owner:KeyDown(IN_RELOAD)
@@ -579,8 +599,16 @@ function SWEP:Think()
         self.WasAttacking2 = false
     end
     
+    -- Защита от множественных срабатываний очистки
     if owner:KeyDown(IN_SPEED) and owner:KeyPressed(IN_RELOAD) then
         if CLIENT then
+            local currentTime = CurTime()
+            if currentTime - self.LastClearTime < 1.0 then
+                return -- Игнорируем повторные вызовы
+            end
+            
+            self.LastClearTime = currentTime
+            
             local tr = owner:GetEyeTrace()
             local ent = tr.Entity  
             if self:GetClass() == "chalk_tool" and IsValid(ent) and self:IsChalkboard(ent) then
@@ -745,7 +773,8 @@ if CLIENT then
             "RMB: Erase", 
             "SHIFT+R: Full Clear (only chalkboard)",
             "R: Quick Change Color",
-            "T: Tool Menu (you can assign another key)"
+            "T: Tool Menu (you can assign another key)",
+            "F2: Save drawings / F3: Load drawings (open special menu)"
         }
         
         surface.SetFont("HudSelectionText")

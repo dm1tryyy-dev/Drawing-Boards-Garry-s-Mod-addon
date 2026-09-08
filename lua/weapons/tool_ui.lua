@@ -10,21 +10,16 @@ function ChalkMarkerUI.BlockInput(block)
 end
 
 if CLIENT then
-    -- Очистку делаем ТОЛЬКО если файл загружается "сверху" (при сохранении кода)
-    -- Мы проверяем, не вызван ли файл внутри функции открытия меню
     for _, pnl in ipairs(vgui.GetWorldPanel():GetChildren()) do
         if pnl.GetTitle and pnl:GetTitle() == "Tool Menu" then
             pnl:Remove()
         end
-        
-        -- Блюр удаляем аккуратно
+
         if pnl:GetName() == "DPanel" and pnl:GetWide() == ScrW() and pnl:GetTall() == ScrH() then
             pnl:Remove()
         end
     end
 
-    -- ВАЖНО: Не обнуляй IsOpen здесь принудительно, если это обычный вызов
-    -- ChalkMarkerUI.State.IsOpen = false  <-- Эту строку пока закомментируй или удали
 end
 
 
@@ -36,7 +31,7 @@ if CLIENT then
     --     local sizeValue = net.ReadUInt(8)
         
     --     if IsValid(weapon) then
-    --         -- Обновляем на клиенте
+
     --         if weapon.SetPlayerSize then
     --             weapon:SetPlayerSize(sizeName)
     --         else
@@ -44,7 +39,7 @@ if CLIENT then
     --             weapon.CurrentSizeValue = sizeValue
     --         end
             
-    --         -- Обновляем UI если он открыт
+
     --         if ChalkMarkerUI.State.IsOpen and IsValid(ChalkMarkerUI.State.CurrentWeapon) and 
     --            ChalkMarkerUI.State.CurrentWeapon == weapon then
     --             ChalkMarkerUI.UpdateContent()
@@ -58,7 +53,7 @@ if CLIENT then
     --     local sizeValue = net.ReadUInt(8)
         
     --     if IsValid(weapon) then
-    --         -- Обновляем на клиенте
+
     --         if weapon.SetPlayerEraseSize then
     --             weapon:SetPlayerEraseSize(sizeName)
     --         else
@@ -66,7 +61,7 @@ if CLIENT then
     --             weapon.CurrentEraseSizeValue = sizeValue
     --         end
             
-    --         -- Обновляем UI если он открыт
+
     --         if ChalkMarkerUI.State.IsOpen and IsValid(ChalkMarkerUI.State.CurrentWeapon) and 
     --            ChalkMarkerUI.State.CurrentWeapon == weapon then
     --             ChalkMarkerUI.UpdateContent()
@@ -135,7 +130,7 @@ end
 surface.CreateFont("ChalkMarkerUI_TabFont", {
     font = "Verdana",
     size = 16,
-    weight = 600, -- полужирный
+    weight = 600,
     antialias = true,
     additive = false
 })
@@ -143,7 +138,7 @@ surface.CreateFont("ChalkMarkerUI_TabFont", {
 surface.CreateFont("ChalkMarkerUI_TitleFont", {
     font = "Verdana",
     size = 20,
-    weight = 700,    -- жирный
+    weight = 700,
     antialias = true,
     additive = false
 })
@@ -151,7 +146,7 @@ surface.CreateFont("ChalkMarkerUI_TitleFont", {
 surface.CreateFont("ChalkMarkerUI_LabelFont", {
     font = "Verdana",
     size = 14,
-    weight = 500,      -- средняя жирность
+    weight = 500,
     antialias = true
 })
 surface.CreateFont("ChalkMarkerUI_CloseIcon", {
@@ -1119,7 +1114,7 @@ function ChalkMarkerUI.CreateSizeTab(parent)
         sliderPanel:SetSize(420, 50)
         sliderPanel.value = default
         
-        -- Кнопка-ползунок (синяя, круглая, меньше)
+        -- Кнопка-ползунок
         local knob = vgui.Create("DButton", sliderPanel)
         knob:SetSize(10, 10)
         knob:SetText("")
@@ -1167,30 +1162,28 @@ function ChalkMarkerUI.CreateSizeTab(parent)
             surface.SetDrawColor(Color(80, 80, 80, 200))
             surface.DrawLine(40, sliderY, 40 + 340, sliderY)
             
-            -- Заполненная часть (синяя)
+            -- Заполненная часть
             local fillT = (sliderPanel.value - min) / (max - min)
             local fillX = 40 + fillT * 340
             surface.SetDrawColor(Color(70, 160, 255, 255))
             surface.DrawLine(40, sliderY, fillX, sliderY)
             
-            -- Шкала с делениями НА ЛИНИИ
+            -- Шкала с делениями
             local stepSize = isErase and 5 or 1
             for val = min, max, stepSize do
                 local t = (val - min) / (max - min)
                 local xPos = 40 + t * 340
                 
                 local isCurrent = math.abs(sliderPanel.value - val) < 0.05
-                
-                -- Рисуем деление (насечки на линии)
                 if isCurrent then
                     surface.SetDrawColor(Color(70, 160, 255, 255))
-                    surface.DrawLine(xPos, sliderY - 4, xPos, sliderY + 4)  -- Пересекает линию
+                    surface.DrawLine(xPos, sliderY - 4, xPos, sliderY + 4)
                 else
                     surface.SetDrawColor(Color(200, 200, 200, 150))
-                    surface.DrawLine(xPos, sliderY - 3, xPos, sliderY + 3)  -- Пересекает линию
+                    surface.DrawLine(xPos, sliderY - 3, xPos, sliderY + 3)
                 end
                 
-                -- Подписи ПОД линией
+                -- Подписи под линией
                 local shouldDraw = isErase or (val == math.floor(val))
                 if shouldDraw then
                     if isCurrent then
@@ -1259,7 +1252,7 @@ function ChalkMarkerUI.CreateSizeTab(parent)
     resetBtn:SetSize(200, 40)
     resetBtn:SetPos(130, 350)
     resetBtn:SetText("Reset settings")
-    resetBtn:SetFont("ChalkMarkerUI_TabFont")  -- Жирный шрифт
+    resetBtn:SetFont("ChalkMarkerUI_TabFont")
     resetBtn:SetTextColor(Color(255, 100, 100))
     resetBtn.Paint = function(self, w, h)
         if self:IsHovered() then
@@ -1375,7 +1368,6 @@ function ChalkMarkerUI.OpenMenu(weapon)
     
     local weaponName = weapon:GetPrintName() or ""
     
-    -- Определяем тип оружия
     if weaponName == "Chalk" then
         ChalkMarkerUI.State.WeaponType = "chalk"
     elseif weaponName == "Marker" then
@@ -1387,9 +1379,6 @@ function ChalkMarkerUI.OpenMenu(weapon)
     ChalkMarkerUI.State.CurrentWeapon = weapon
     ChalkMarkerUI.State.IsOpen = true
     ChalkMarkerUI.State.ActiveTab = "color"
-    
-    -- ВАЖНО: Проверяем и инициализируем переменные размера
-    -- Если переменные не установлены, устанавливаем их из текущих значений
     
     -- Для цвета
     if not weapon.CurrentColor then
@@ -1425,12 +1414,10 @@ function ChalkMarkerUI.OpenMenu(weapon)
     if not weapon.CurrentEraseSize then
         weapon.CurrentEraseSize = "medium"
     end
-    
-    -- Скрываем оружие и включаем курсор
+
     weapon:SetNoDraw(true)
     gui.EnableScreenClicker(true)
-    
-    -- Создаем интерфейс
+
     ChalkMarkerUI.BlurBackground = ChalkMarkerUI.CreateBlurBackground()
     if not IsValid(ChalkMarkerUI.BlurBackground) then
         ChalkMarkerUI.State.IsOpen = false
@@ -1482,8 +1469,7 @@ function ChalkMarkerUI.CloseMenu()
         else
             sizeValue = ChalkMarkerConfig.GetSizeValue(ChalkMarkerUI.State.WeaponType, "draw", "medium")
         end
-        
-        -- Отправляем с учетом кастомного цвета
+
         net.Start("ChalkMarkerUI_UpdateWeapon")
             net.WriteString(colorName)
             net.WriteFloat(sizeValue)
@@ -1534,7 +1520,7 @@ end
 -- ============ КЛИЕНТСКИЕ ХУКИ ============
 
 hook.Add("Think", "ChalkMarkerUI_Main", function()
-    -- Если ввод заблокирован (открыто окно сохранения), не обрабатываем клавиши
+    
     if ChalkMarkerUI.IsInputBlocked then return end
     if ChalkMarkerUI.KeybindBlocked then return end
     

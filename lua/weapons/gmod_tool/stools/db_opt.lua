@@ -422,14 +422,38 @@ function TOOL.BuildCPanel(CPanel)
     lowQualityCheckbox:SetValue(isLowQuality)
     
     lowQualityCheckbox.OnChange = function(self, value)
-        RunConsoleCommand("db_opt_render_qlt", value and "1" or "2")
-        print("[DB] Low Quality Mode: " .. (value and "Enabled (512x512)" or "Disabled (1024x1024)"))
+        local newConvarValue = value and "1" or "2"
+        
+        -- В Single Player / Listen Server мы и есть сервер — можем менять карту
+        if game.SinglePlayer() then
+            Derma_Query(
+                "Restart the map to apply quality settings?\n\nYour drawings will be lost.",
+                "Quality changed",
+                "Yes", function()
+                    RunConsoleCommand("db_opt_render_qlt", newConvarValue)
+                    timer.Simple(0.2, function()
+                        RunConsoleCommand("changelevel", game.GetMap())
+                    end)
+                end,
+                "No", function()
+                    self:SetChecked(not value)
+                end
+            )
+        else
+            RunConsoleCommand("db_opt_render_qlt", newConvarValue)
+            notification.AddLegacy(
+                "Quality set. Reconnect to the server to apply.",
+                NOTIFY_GENERIC,
+                6
+            )
+        end
     end
     
     CPanel:AddItem(lowQualityCheckbox)
     CPanel:ControlHelp("")
     CPanel:ControlHelp("  Enable = 512x512 (better FPS)")
     CPanel:ControlHelp("  Disable = 1024x1024 (default)")
+    CPanel:ControlHelp("  Server restart required.")
     CPanel:ControlHelp("")
     CPanel:ControlHelp("")
     CPanel:ControlHelp("Board Points Limit")

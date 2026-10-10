@@ -4,13 +4,10 @@ local DEBUG_COLORS = false
 
 local function ColorDebug(...)
     if not DEBUG_COLORS then return end
-
     local msg = ""
-
     for k, v in ipairs({...}) do
         msg = msg .. tostring(v) .. " "
     end
-
     print("[MARKER COLOR]", msg)
 end
 
@@ -31,57 +28,48 @@ if SERVER then
     util.AddNetworkString("ChalkMarkerUI_SyncSize")
     util.AddNetworkString("ChalkMarkerUI_SyncEraseSize")
 
-    -- Таблица для отслеживания времени последней очистки
     local lastClearTime = {}
 
-    -- Обработчик синхронизации цвета
     net.Receive("MarkerSyncColor", function(len, ply)
         local colorName = net.ReadString()
         local weapon = ply:GetActiveWeapon()
-        
         if IsValid(weapon) and weapon:GetClass() == "marker_tool" then
             weapon:SetPlayerColor(colorName)
         end
     end)
 
-    -- Обработчик синхронизации индекса
     net.Receive("MarkerSyncColorIndex", function()
         local weapon = net.ReadEntity()
         local colorIndex = net.ReadUInt(8)
-        
-        if IsValid(weapon) then
-            weapon.ColorIndex = colorIndex
-        end
+        if IsValid(weapon) then weapon.ColorIndex = colorIndex end
     end)
 
-    -- Обработчик рисования маркером
     net.Receive("MarkerDraw", function(len, ply)
         local whiteboard = net.ReadEntity()
         local hitPos = net.ReadVector()
         local color = net.ReadColor()
         local size = net.ReadUInt(8)
         local isNewLine = net.ReadBool()
-        
+
         if not IsValid(whiteboard) or not IsValid(ply) then return end
-        
-        local isSupported = whiteboard:GetClass() == "whiteboard" or 
+
+        local isSupported = whiteboard:GetClass() == "whiteboard" or
                            whiteboard:GetClass() == "little_whiteboard" or
                            whiteboard:GetClass() == "whiteboard_oversized" or
                            whiteboard:GetClass() == "tech_panel" or
                            whiteboard:GetClass() == "tech_panel_oversized"
         if not isSupported then return end
-        
+
         local weapon = ply:GetActiveWeapon()
         local actualColor = color
-        
         if IsValid(weapon) and weapon:GetClass() == "marker_tool" then
             actualColor = weapon:GetDrawColor()
         end
-        
+
         if whiteboard.DrawOnBoard then
             whiteboard:DrawOnBoard(hitPos, actualColor, size, isNewLine, ply)
         end
-        
+
         net.Start("MarkerDraw")
             net.WriteEntity(whiteboard)
             net.WriteVector(hitPos)
@@ -91,23 +79,22 @@ if SERVER then
             net.WriteEntity(ply)
         net.SendPVS(whiteboard:GetPos())
     end)
-    
-    -- Обработчик стирания маркером
+
     net.Receive("MarkerErase", function(len, ply)
         local whiteboard = net.ReadEntity()
         local hitPos = net.ReadVector()
         local size = net.ReadUInt(8)
         local isNewLine = net.ReadBool()
-        
+
         if not IsValid(whiteboard) or not IsValid(ply) then return end
-        
-        local isSupported = whiteboard:GetClass() == "whiteboard" or 
+
+        local isSupported = whiteboard:GetClass() == "whiteboard" or
                            whiteboard:GetClass() == "little_whiteboard" or
-                           whiteboard:GetClass() == "whiteboard_oversized" or 
+                           whiteboard:GetClass() == "whiteboard_oversized" or
                            whiteboard:GetClass() == "tech_panel" or
                            whiteboard:GetClass() == "tech_panel_oversized"
         if not isSupported then return end
-        
+
         if whiteboard.EraseOnBoard then
             whiteboard:EraseOnBoard(hitPos, size, isNewLine, ply)
         end
@@ -121,20 +108,13 @@ if SERVER then
         net.SendPVS(whiteboard:GetPos())
     end)
 
-    -- Обработчик очистки всей доски
     concommand.Add("marker_clear", function(ply)
         if not IsValid(ply) then return end
-        
-        -- Защита от множественных срабатываний
         local currentTime = CurTime()
         local lastTime = lastClearTime[ply:SteamID()] or 0
-        
-        if currentTime - lastTime < 1.0 then
-            return -- Игнорируем повторные вызовы в течение 1 секунды
-        end
-        
+        if currentTime - lastTime < 1.0 then return end
         lastClearTime[ply:SteamID()] = currentTime
-        
+
         local tr = ply:GetEyeTrace()
         local ent = tr.Entity
         local class = ent:GetClass()
@@ -144,45 +124,20 @@ if SERVER then
             elseif ent.ClearTechPanel then
                 ent:ClearTechPanel()
             end
-            
+
             net.Start("WhiteboardClear")
                 net.WriteEntity(ent)
             net.SendPVS(ent:GetPos())
-            
-            -- Определяем тип доски для сообщения
+
             local boardType = "Whiteboard"
             if class == "tech_panel" or class == "tech_panel_oversized" then
                 boardType = "Tech Panel"
             end
-            
             ply:ChatPrint(boardType .. " cleared!")
         else
             ply:ChatPrint("Look at a whiteboard or tech panel to clear it!")
         end
     end)
-
-    -- Обработчик очистки только своих рисунков
-    -- concommand.Add("marker_clear_self", function(ply)
-    --     local tr = ply:GetEyeTrace()
-    --     local ent = tr.Entity
-    --     local class = ent:GetClass()
-    --     if IsValid(ent) and (class == "whiteboard" or class == "little_whiteboard" or class == "whiteboard_oversized" or class == "tech_panel" or class == "tech_panel_oversized") then
-    --         if ent.ClearPlayerDrawings then
-    --             ent:ClearPlayerDrawings(ply)
-                
-    --             net.Start("WhiteboardClearPlayer")
-    --                 net.WriteEntity(ent)
-    --                 net.WriteEntity(ply)
-    --             net.SendPVS(ent:GetPos())
-                
-    --             ply:ChatPrint("Your drawings cleared!")
-    --         else
-    --             ply:ChatPrint("This board doesn't support player-specific clearing")
-    --         end
-    --     else
-    --         ply:ChatPrint("Look at a whiteboard or tech panel to clear your drawings!")
-    --     end
-    -- end)
 end
 
 SWEP.Base = "weapon_base"
@@ -206,8 +161,8 @@ SWEP.HoldType = "pistol"
 SWEP.ViewModelFOV = 70
 SWEP.UseHands = true
 
-SWEP.DrawAmmo = false 
-SWEP.DrawWeaponInfoBox = false 
+SWEP.DrawAmmo = false
+SWEP.DrawWeaponInfoBox = false
 
 SWEP.Primary.ClipSize = -1
 SWEP.Primary.DefaultClip = -1
@@ -237,9 +192,7 @@ SWEP.ColorIndex = 1
 function SWEP:IsSupportedBoard(entity)
     if not IsValid(entity) then return false end
     for _, boardClass in ipairs(self.SupportedBoards) do
-        if entity:GetClass() == boardClass then
-            return true
-        end
+        if entity:GetClass() == boardClass then return true end
     end
     return false
 end
@@ -248,7 +201,7 @@ function SWEP:Initialize()
     self.MarkerMaterial = Material("models/tools_materials/marker/Marker")
     self.ColorMaterial = Material("models/tools_materials/marker/Color")
     self.BodyMaterial = Material("models/tools_materials/marker/Body")
-    
+
     if SERVER then
         self.PlayerData = {}
         self.ColorIndex = 1
@@ -258,7 +211,7 @@ function SWEP:Initialize()
     self.WasAttacking2 = false
     self.ReloadPressed = false
     self.NextDrawSend = 0
-    self.LastClearTime = 0 -- Для отслеживания времени последней очистки
+    self.LastClearTime = 0
 
     if CLIENT then
         self.CurrentColor = self.CurrentColor or "black"
@@ -273,57 +226,43 @@ function SWEP:Initialize()
     end
 
     if SERVER then
-        timer.Simple(0.1, function() 
-            if IsValid(self) then 
-                self:SyncColorToClient() 
+        timer.Simple(0.1, function()
+            if IsValid(self) then
+                self:SyncColorToClient()
                 self:SyncColorIndexToClient()
-            end 
+            end
         end)
     end
 end
 
 function SWEP:GetPlayerColor()
-    if CLIENT then
-        return self.CurrentColor or "black"
-    end
-    
+    if CLIENT then return self.CurrentColor or "black" end
     local owner = self:GetOwner()
     if not IsValid(owner) then return "black" end
-    
     local userid = owner:UserID()
     local data = self.PlayerData[userid]
     if not data then
         data = {color = "black", colorIndex = 1}
         self.PlayerData[userid] = data
     end
-    
     return data.color or "black"
 end
 
 function SWEP:SetPlayerColor(colorName)
     local owner = self:GetOwner()
+    ColorDebug(SERVER and "SERVER" or "CLIENT", "SetPlayerColor",
+        IsValid(owner) and owner:Nick() or "NULL", colorName,
+        math.floor(SysTime() * 1000))
 
-    ColorDebug(
-        SERVER and "SERVER" or "CLIENT",
-        "SetPlayerColor",
-        IsValid(owner) and owner:Nick() or "NULL",
-        colorName,
-        math.floor(SysTime() * 1000)
-    )
-    
     if not IsValid(owner) then return end
-    
+
     local colors = ChalkMarkerConfig.ColorOrder.marker or {"black", "red", "blue", "green", "yellow", "orange", "cyan", "purple", "pink", "brown"}
     local foundIndex = 1
     for i, color in ipairs(colors) do
-        if color == colorName then
-            foundIndex = i
-            break
-        end
+        if color == colorName then foundIndex = i; break end
     end
-    
     self.ColorIndex = foundIndex
-    
+
     if SERVER then
         local userid = owner:UserID()
         self.PlayerData[userid] = self.PlayerData[userid] or {}
@@ -344,10 +283,7 @@ function SWEP:GetNextColor()
     local currentColor = self:GetPlayerColor()
     local currentIndex = 1
     for i, color in ipairs(colors) do
-        if color == currentColor then
-            currentIndex = i
-            break
-        end
+        if color == currentColor then currentIndex = i; break end
     end
     local nextIndex = (currentIndex % #colors) + 1
     return colors[nextIndex]
@@ -356,47 +292,41 @@ end
 function SWEP:GetDrawSizeValue()
     if CLIENT then
         return self.CurrentSizeValue or 7.0
-    else
-        local owner = self:GetOwner()
-        if IsValid(owner) then
-            local userid = owner:UserID()
-            if self.PlayerData and self.PlayerData[userid] and self.PlayerData[userid].sizeValue then
-                return self.PlayerData[userid].sizeValue
-            end
-        end
-        return 7.0
     end
+    local owner = self:GetOwner()
+    if IsValid(owner) then
+        local userid = owner:UserID()
+        if self.PlayerData and self.PlayerData[userid] and self.PlayerData[userid].sizeValue then
+            return self.PlayerData[userid].sizeValue
+        end
+    end
+    return 7.0
 end
 
 function SWEP:GetEraseSizeValue()
     if CLIENT then
         return self.CurrentEraseSizeValue or 15.0
-    else
-        local owner = self:GetOwner()
-        if IsValid(owner) then
-            local userid = owner:UserID()
-            if self.PlayerData and self.PlayerData[userid] and self.PlayerData[userid].eraseSizeValue then
-                return self.PlayerData[userid].eraseSizeValue
-            end
-        end
-        return 15.0
     end
+    local owner = self:GetOwner()
+    if IsValid(owner) then
+        local userid = owner:UserID()
+        if self.PlayerData and self.PlayerData[userid] and self.PlayerData[userid].eraseSizeValue then
+            return self.PlayerData[userid].eraseSizeValue
+        end
+    end
+    return 15.0
 end
 
 function SWEP:SetMarkerColor(colorName)
     local colorData = ChalkMarkerConfig.GetColorData("marker", colorName)
-    if CLIENT then
-        self.CurrentColor = colorName
-    end
+    if CLIENT then self.CurrentColor = colorName end
     if self.BodyMaterial then
         self:SetBodyTexture(colorData.texture)
     end
     if self.MarkerMaterial and self.ColorMaterial then
         self:SetMarkerColor2(colorData.tool_color)
     end
-    if SERVER then
-        self:SyncColorToClient()
-    end
+    if SERVER then self:SyncColorToClient() end
 end
 
 function SWEP:SetBodyTexture(texturePath)
@@ -433,14 +363,12 @@ function SWEP:Deploy()
         timer.Simple(0.1, function()
             if IsValid(self) then
                 self:SyncColorToServer(self.CurrentColor or "black")
-                
                 if not self.CurrentSizeValue or self.CurrentSizeValue == 0 then
                     self.CurrentSizeValue = 7.0
                 end
                 if not self.CurrentEraseSizeValue or self.CurrentEraseSizeValue == 0 then
                     self.CurrentEraseSizeValue = 15.0
                 end
-                
                 local colorName = self.CurrentColor or "black"
                 net.Start("ChalkMarkerUI_UpdateWeapon")
                     net.WriteString(colorName)
@@ -449,7 +377,6 @@ function SWEP:Deploy()
                         net.WriteColor(self.CustomColor)
                     end
                 net.SendToServer()
-                
                 net.Start("ChalkMarkerUI_UpdateEraseSize")
                     net.WriteFloat(self.CurrentEraseSizeValue)
                 net.SendToServer()
@@ -459,9 +386,7 @@ function SWEP:Deploy()
     return true
 end
 
-function SWEP:Reload()
-    return false
-end
+function SWEP:Reload() return false end
 
 function SWEP:SyncColorToServer(colorName)
     if CLIENT then
@@ -478,22 +403,20 @@ function SWEP:GetDrawColor()
             return self.CustomColor
         end
         return ChalkMarkerConfig.GetDrawColor("marker", currentColor)
-    else
-        local owner = self:GetOwner()
-        if not IsValid(owner) then return Color(0, 0, 0) end
-        local userid = owner:UserID()
-        local data = self.PlayerData[userid]
-        if data then
-            if data.color == "__custom__" and data.customColor then
-                return data.customColor
-            end
-            return ChalkMarkerConfig.GetDrawColor("marker", data.color or "black")
-        end
-        return Color(0, 0, 0)
     end
+    local owner = self:GetOwner()
+    if not IsValid(owner) then return Color(0, 0, 0) end
+    local userid = owner:UserID()
+    local data = self.PlayerData[userid]
+    if data then
+        if data.color == "__custom__" and data.customColor then
+            return data.customColor
+        end
+        return ChalkMarkerConfig.GetDrawColor("marker", data.color or "black")
+    end
+    return Color(0, 0, 0)
 end
 
--- Настройки VIEW/WORLD модели
 SWEP.ViewModelOffset = Vector(20, 10, -3.5)
 SWEP.ViewModelAngle = Angle(10, 5, 0)
 SWEP.WorldModelOffset = Vector(7.8, -2, 0)
@@ -546,13 +469,21 @@ function SWEP:PrimaryAttack()
     if IsValid(tr.Entity) and self:IsSupportedBoard(tr.Entity) then
         local sizeValue = self:GetDrawSizeValue()
         if CLIENT then
+            local drawColor = self:GetDrawColor()
+
+            -- Отправляем на сервер (для синхронизации другим игрокам)
             net.Start("MarkerDraw")
                 net.WriteEntity(tr.Entity)
                 net.WriteVector(tr.HitPos)
-                net.WriteColor(self:GetDrawColor())
+                net.WriteColor(drawColor)
                 net.WriteUInt(sizeValue or 7, 8)
                 net.WriteBool(true)
             net.SendToServer()
+
+            -- ЛОКАЛЬНОЕ применение (мгновенно, не ждём echo от сервера)
+            if tr.Entity.DrawOnBoard then
+                tr.Entity:DrawOnBoard(tr.HitPos, drawColor, sizeValue or 7, true, owner)
+            end
         end
     end
     self:SetNextPrimaryFire(CurTime() + 0.02)
@@ -566,12 +497,18 @@ function SWEP:SecondaryAttack()
     if IsValid(tr.Entity) and self:IsSupportedBoard(tr.Entity) then
         local eraseSizeValue = self:GetEraseSizeValue()
         if CLIENT then
+            -- Отправляем на сервер
             net.Start("MarkerErase")
                 net.WriteEntity(tr.Entity)
                 net.WriteVector(tr.HitPos)
                 net.WriteUInt(eraseSizeValue or 12, 8)
                 net.WriteBool(true)
             net.SendToServer()
+
+            -- ЛОКАЛЬНОЕ применение (мгновенно)
+            if tr.Entity.EraseOnBoard then
+                tr.Entity:EraseOnBoard(tr.HitPos, eraseSizeValue or 12, true, owner)
+            end
         end
     end
     self:SetNextSecondaryFire(CurTime() + 0.02)
@@ -581,7 +518,7 @@ end
 function SWEP:Think()
     local owner = self:GetOwner()
     if not IsValid(owner) then return end
-    
+
     local isAttacking = owner:KeyDown(IN_ATTACK)
     local isAttacking2 = owner:KeyDown(IN_ATTACK2)
     local reloadDown = owner:KeyDown(IN_RELOAD)
@@ -591,37 +528,24 @@ function SWEP:Think()
         if SERVER and not owner:KeyDown(IN_SPEED) then
             local currentColor = self:GetPlayerColor()
             local nextColor = self:GetNextColor()
-
-            ColorDebug(
-                "COLOR SWITCH",
-                owner:Nick(),
-                "TIME:",
-                math.floor(SysTime() * 1000),
-                "FROM:",
-                currentColor,
-                "TO:",
-                nextColor
-            )
-
+            ColorDebug("COLOR SWITCH", owner:Nick(),
+                "TIME:", math.floor(SysTime() * 1000),
+                "FROM:", currentColor, "TO:", nextColor)
             self:SetPlayerColor(nextColor)
         end
     elseif not reloadDown then
         self.ReloadPressed = false
     end
-    
+
     if not isAttacking then self.WasAttacking = false end
     if not isAttacking2 then self.WasAttacking2 = false end
-    
-    -- Защита от множественных срабатываний очистки
+
+    -- SHIFT+R — очистка доски
     if owner:KeyDown(IN_SPEED) and owner:KeyPressed(IN_RELOAD) then
         if CLIENT then
             local currentTime = CurTime()
-            if currentTime - self.LastClearTime < 1.0 then
-                return -- Игнорируем повторные вызовы
-            end
-            
+            if currentTime - self.LastClearTime < 1.0 then return end
             self.LastClearTime = currentTime
-            
             local tr = owner:GetEyeTrace()
             local ent = tr.Entity
             if IsValid(ent) and self:IsSupportedBoard(ent) then
@@ -632,44 +556,106 @@ function SWEP:Think()
     end
 
     if CLIENT then
+        -- РИСОВАНИЕ: пока держим ЛКМ
         if isAttacking and CurTime() >= self:GetNextPrimaryFire() then
             local tr = owner:GetEyeTrace()
             if IsValid(tr.Entity) and self:IsSupportedBoard(tr.Entity) then
                 local isNewLine = not self.WasAttacking
                 local sizeValue = self:GetDrawSizeValue()
+                local drawColor = self:GetDrawColor()
+
+                -- Сеть (для других игроков)
                 net.Start("MarkerDraw")
                     net.WriteEntity(tr.Entity)
                     net.WriteVector(tr.HitPos)
-                    net.WriteColor(self:GetDrawColor())
+                    net.WriteColor(drawColor)
                     net.WriteUInt(sizeValue or 7, 8)
                     net.WriteBool(isNewLine)
                 net.SendToServer()
+
+                -- Локально (мгновенно у себя)
+                if tr.Entity.DrawOnBoard then
+                    tr.Entity:DrawOnBoard(tr.HitPos, drawColor, sizeValue or 7, isNewLine, owner)
+                end
+
                 self:SetNextPrimaryFire(CurTime() + 0.01)
                 self.WasAttacking = true
             end
         end
+
+        -- СТИРАНИЕ: пока держим ПКМ
         if isAttacking2 and CurTime() >= self:GetNextSecondaryFire() then
             local tr = owner:GetEyeTrace()
             if IsValid(tr.Entity) and self:IsSupportedBoard(tr.Entity) then
                 local isNewLine = not self.WasAttacking2
                 local eraseSizeValue = self:GetEraseSizeValue()
+
+                -- Сеть
                 net.Start("MarkerErase")
                     net.WriteEntity(tr.Entity)
                     net.WriteVector(tr.HitPos)
                     net.WriteUInt(eraseSizeValue or 12, 8)
                     net.WriteBool(isNewLine)
                 net.SendToServer()
+
+                -- Локально
+                if tr.Entity.EraseOnBoard then
+                    tr.Entity:EraseOnBoard(tr.HitPos, eraseSizeValue or 12, isNewLine, owner)
+                end
+
                 self:SetNextSecondaryFire(CurTime() + 0.01)
                 self.WasAttacking2 = true
             end
         end
+
+        -- Финальная отправка при отпускании кнопок:
+        -- закрывает разрыв между последней отправленной точкой и текущей
+        -- позицией курсора в момент отпускания.
+        if self._prevPrimaryDown and not isAttacking then
+            local tr = owner:GetEyeTrace()
+            if IsValid(tr.Entity) and self:IsSupportedBoard(tr.Entity) then
+                local sizeValue = self:GetDrawSizeValue()
+                local drawColor = self:GetDrawColor()
+
+                net.Start("MarkerDraw")
+                    net.WriteEntity(tr.Entity)
+                    net.WriteVector(tr.HitPos)
+                    net.WriteColor(drawColor)
+                    net.WriteUInt(sizeValue or 7, 8)
+                    net.WriteBool(false)  -- интерполировать от последней позиции
+                net.SendToServer()
+
+                if tr.Entity.DrawOnBoard then
+                    tr.Entity:DrawOnBoard(tr.HitPos, drawColor, sizeValue or 7, false, owner)
+                end
+            end
+        end
+
+        if self._prevSecondaryDown and not isAttacking2 then
+            local tr = owner:GetEyeTrace()
+            if IsValid(tr.Entity) and self:IsSupportedBoard(tr.Entity) then
+                local eraseSizeValue = self:GetEraseSizeValue()
+
+                net.Start("MarkerErase")
+                    net.WriteEntity(tr.Entity)
+                    net.WriteVector(tr.HitPos)
+                    net.WriteUInt(eraseSizeValue or 12, 8)
+                    net.WriteBool(false)  -- интерполировать от последней позиции
+                net.SendToServer()
+
+                if tr.Entity.EraseOnBoard then
+                    tr.Entity:EraseOnBoard(tr.HitPos, eraseSizeValue or 12, false, owner)
+                end
+            end
+        end
+
+        self._prevPrimaryDown = isAttacking
+        self._prevSecondaryDown = isAttacking2
     end
 end
 
 function SWEP:OnRemove()
-    if SERVER then
-        self.PlayerData = {}
-    end
+    if SERVER then self.PlayerData = {} end
 end
 
 if CLIENT then
@@ -678,7 +664,7 @@ if CLIENT then
         local colorIndex = net.ReadUInt(8)
         if IsValid(weapon) then weapon.ColorIndex = colorIndex end
     end)
-    
+
     net.Receive("MarkerColorUpdate", function()
         local weapon = net.ReadEntity()
         local colorName = net.ReadString()
@@ -692,29 +678,38 @@ if CLIENT then
         end
     end)
 
+    -- ВАЖНО: собственный echo от сервера игнорируем — уже применено локально
     net.Receive("MarkerDraw", function()
         local whiteboard = net.ReadEntity()
         local hitPos = net.ReadVector()
         local color = net.ReadColor()
         local size = net.ReadUInt(8)
         local isNewLine = net.ReadBool()
+        local player = net.ReadEntity()
+
+        if player == LocalPlayer() then return end
+
         if IsValid(whiteboard) and whiteboard.DrawOnBoard then
-            whiteboard:DrawOnBoard(hitPos, color, size, isNewLine)
+            whiteboard:DrawOnBoard(hitPos, color, size, isNewLine, player)
         end
     end)
-    
+
     net.Receive("MarkerErase", function()
         local whiteboard = net.ReadEntity()
         local hitPos = net.ReadVector()
         local size = net.ReadUInt(8)
         local isNewLine = net.ReadBool()
+        local player = net.ReadEntity()
+
+        if player == LocalPlayer() then return end
+
         if IsValid(whiteboard) and whiteboard.EraseOnBoard then
-            whiteboard:EraseOnBoard(hitPos, size, isNewLine)
+            whiteboard:EraseOnBoard(hitPos, size, isNewLine, player)
         end
     end)
 end
 
--- HUD и прицел
+-- HUD
 if CLIENT then
     local hintAlpha = 0
     local hintOffset = -300
@@ -725,7 +720,7 @@ if CLIENT then
         local owner = self:GetOwner()
         if not IsValid(owner) or owner ~= LocalPlayer() then return end
         if owner:GetActiveWeapon() ~= self then return end
-        
+
         local currentTime = CurTime()
         if not isShowingHint then
             isShowingHint = true
@@ -733,7 +728,7 @@ if CLIENT then
             hintAlpha = 0
             hintOffset = -300
         end
-        
+
         local timeSinceShow = currentTime - hintStartTime
         if timeSinceShow < 10 then
             hintAlpha = math.min(hintAlpha + FrameTime() * 6, 1)
@@ -745,16 +740,16 @@ if CLIENT then
         else
             hintAlpha = 0
         end
-        
+
         local hints = {
             "LMB: Draw",
-            "RMB: Erase", 
+            "RMB: Erase",
             "SHIFT+R: Full Clear (whiteboard and tech panel)",
             "R: Quick Change Color",
             "T: Tool Menu (you can assign another key)",
             "F2: Save drawings / F3: Load drawings (open special menu)"
         }
-        
+
         surface.SetFont("HudSelectionText")
         local maxWidth, maxHeight, padding = 0, 0, 20
         local title = "CONTROLS"
@@ -770,7 +765,7 @@ if CLIENT then
         local totalHeight = (#hints + 1) * lineHeight + padding * 2
         local x = hintOffset
         local y = ScrH() / 2 - totalHeight / 2
-        
+
         if hintAlpha > 0.01 then
             surface.SetDrawColor(0, 0, 0, 200 * hintAlpha)
             surface.DrawRect(x, y, totalWidth, totalHeight)
@@ -790,19 +785,19 @@ if CLIENT then
                 draw.SimpleText(hint, "HudSelectionText", x + padding, textY, Color(255, 212, 0, 255 * hintAlpha), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
             end
         end
-        
+
         local isErasing = owner:KeyDown(IN_ATTACK2)
         local isDrawing = owner:KeyDown(IN_ATTACK)
         local centerX, centerY = ScrW() / 2, ScrH() / 2
         local radius
-        if isErasing then 
+        if isErasing then
             radius = self:GetEraseSizeValue() or 15
-        elseif isDrawing then 
+        elseif isDrawing then
             radius = (self:GetDrawSizeValue() or 7) * 1.5
-        else 
-            radius = 20 
+        else
+            radius = 20
         end
-        
+
         local dotRadius, thickness = 5, 3
         local cacheKey = radius .. "_" .. ScrW() .. "_" .. ScrH()
         if not self.ReticleCacheKey or self.ReticleCacheKey ~= cacheKey then
@@ -825,21 +820,19 @@ if CLIENT then
                 table.insert(self.DotPolyCache, {x = centerX + math.cos(angle) * dotRadius, y = centerY + math.sin(angle) * dotRadius})
             end
         end
-        
+
         draw.NoTexture()
         render.OverrideBlend(true, BLEND_ONE_MINUS_DST_COLOR, BLEND_ZERO, BLENDFUNC_ADD)
         surface.SetDrawColor(255, 255, 255, 255)
-        if self.RingPolyCache then 
-            for _, poly in ipairs(self.RingPolyCache) do 
-                surface.DrawPoly(poly) 
-            end 
+        if self.RingPolyCache then
+            for _, poly in ipairs(self.RingPolyCache) do surface.DrawPoly(poly) end
         end
-        if self.DotPolyCache then 
-            surface.DrawPoly(self.DotPolyCache) 
+        if self.DotPolyCache then
+            surface.DrawPoly(self.DotPolyCache)
         end
         render.OverrideBlend(false)
     end
-    
+
     function SWEP:Holster()
         isShowingHint = false
         return true

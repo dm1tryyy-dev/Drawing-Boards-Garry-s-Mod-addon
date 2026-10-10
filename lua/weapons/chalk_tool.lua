@@ -532,13 +532,20 @@ function SWEP:PrimaryAttack()
         local sizeValue = self:GetDrawSizeValue()
         
         if CLIENT then
+            local drawColor = self:GetDrawColor()
+
             net.Start("ChalkDraw")
                 net.WriteEntity(tr.Entity)
                 net.WriteVector(tr.HitPos)
-                net.WriteColor(self:GetDrawColor())
-                net.WriteUInt(sizeValue or 7,8)
+                net.WriteColor(drawColor)
+                net.WriteUInt(sizeValue or 7, 8)
                 net.WriteBool(true)
             net.SendToServer()
+
+            -- Локальное применение (мгновенно, не ждём echo от сервера)
+            if tr.Entity.DrawOnBoard then
+                tr.Entity:DrawOnBoard(tr.HitPos, drawColor, sizeValue or 7, true, owner)
+            end
         end
     end
     
@@ -559,15 +566,21 @@ function SWEP:SecondaryAttack()
             net.Start("ChalkErase")
                 net.WriteEntity(tr.Entity)
                 net.WriteVector(tr.HitPos)
-                net.WriteUInt(eraseSizeValue or 12,8)
+                net.WriteUInt(eraseSizeValue or 12, 8)
                 net.WriteBool(true)
             net.SendToServer()
+
+            -- Локальное применение (мгновенно)
+            if tr.Entity.EraseOnBoard then
+                tr.Entity:EraseOnBoard(tr.HitPos, eraseSizeValue or 12, true, owner)
+            end
         end
     end
     
     self:SetNextSecondaryFire(CurTime() + 0.02)
     self.WasAttacking2 = true
 end
+
 
 function SWEP:Think()
     local owner = self:GetOwner()
@@ -599,12 +612,12 @@ function SWEP:Think()
         self.WasAttacking2 = false
     end
     
-    -- Защита от множественных срабатываний очистки
+    -- SHIFT+R — очистка доски
     if owner:KeyDown(IN_SPEED) and owner:KeyPressed(IN_RELOAD) then
         if CLIENT then
             local currentTime = CurTime()
             if currentTime - self.LastClearTime < 1.0 then
-                return -- Игнорируем повторные вызовы
+                return
             end
             
             self.LastClearTime = currentTime
@@ -619,26 +632,34 @@ function SWEP:Think()
     end
 
     if CLIENT then
+        -- РИСОВАНИЕ: пока держим ЛКМ
         if isAttacking and CurTime() >= self:GetNextPrimaryFire() then
             local tr = owner:GetEyeTrace()
             
             if IsValid(tr.Entity) and self:IsChalkboard(tr.Entity) then
                 local isNewLine = not self.WasAttacking
                 local sizeValue = self:GetDrawSizeValue()
+                local drawColor = self:GetDrawColor()
                 
                 net.Start("ChalkDraw")
                     net.WriteEntity(tr.Entity)
                     net.WriteVector(tr.HitPos)
-                    net.WriteColor(self:GetDrawColor())
-                    net.WriteUInt(sizeValue or 7,8)
+                    net.WriteColor(drawColor)
+                    net.WriteUInt(sizeValue or 7, 8)
                     net.WriteBool(isNewLine)
                 net.SendToServer()
+                
+                -- Локально (мгновенно у себя)
+                if tr.Entity.DrawOnBoard then
+                    tr.Entity:DrawOnBoard(tr.HitPos, drawColor, sizeValue or 7, isNewLine, owner)
+                end
                 
                 self:SetNextPrimaryFire(CurTime() + 0.01)
                 self.WasAttacking = true
             end
         end
         
+        -- СТИРАНИЕ: пока держим ПКМ
         if isAttacking2 and CurTime() >= self:GetNextSecondaryFire() then
             local tr = owner:GetEyeTrace()
             
@@ -649,14 +670,61 @@ function SWEP:Think()
                 net.Start("ChalkErase")
                     net.WriteEntity(tr.Entity)
                     net.WriteVector(tr.HitPos)
-                    net.WriteUInt(eraseSizeValue or 12,8)
+                    net.WriteUInt(eraseSizeValue or 12, 8)
                     net.WriteBool(isNewLine)
                 net.SendToServer()
+                
+                -- Локально
+                if tr.Entity.EraseOnBoard then
+                    tr.Entity:EraseOnBoard(tr.HitPos, eraseSizeValue or 12, isNewLine, owner)
+                end
                 
                 self:SetNextSecondaryFire(CurTime() + 0.01)
                 self.WasAttacking2 = true
             end
         end
+
+        -- Финальная отправка при отпускании кнопок
+        if self._prevPrimaryDown and not isAttacking then
+            local tr = owner:GetEyeTrace()
+            if IsValid(tr.Entity) and self:IsChalkboard(tr.Entity) then
+                local sizeValue = self:GetDrawSizeValue()
+                local drawColor = self:GetDrawColor()
+
+                net.Start("ChalkDraw")
+                    net.WriteEntity(tr.Entity)
+                    net.WriteVector(tr.HitPos)
+                    net.WriteColor(drawColor)
+                    net.WriteUInt(sizeValue or 7, 8)
+                    net.WriteBool(false)
+                net.SendToServer()
+
+                if tr.Entity.DrawOnBoard then
+                    tr.Entity:DrawOnBoard(tr.HitPos, drawColor, sizeValue or 7, false, owner)
+                end
+            end
+        end
+
+        if self._prevSecondaryDown and not isAttacking2 then
+            local tr = owner:GetEyeTrace()
+            if IsValid(tr.Entity) and self:IsChalkboard(tr.Entity) then
+                local eraseSizeValue = self:GetEraseSizeValue()
+
+                net.Start("ChalkErase")
+                    net.WriteEntity(tr.Entity)
+                    net.WriteVector(tr.HitPos)
+                    net.WriteUInt(eraseSizeValue or 12, 8)
+                    net.WriteBool(false)
+                net.SendToServer()
+
+                if tr.Entity.EraseOnBoard then
+                    tr.Entity:EraseOnBoard(tr.HitPos, eraseSizeValue or 12, false, owner)
+                end
+            end
+        end
+
+        self._prevPrimaryDown = isAttacking
+        self._prevSecondaryDown = isAttacking2
     end
 end
 
@@ -716,20 +784,26 @@ if CLIENT then
         local color = net.ReadColor()
         local size = net.ReadUInt(8)
         local isNewLine = net.ReadBool()
-        
+        local player = net.ReadEntity()
+
+        if player == LocalPlayer() then return end
+
         if IsValid(chalkboard) and chalkboard.DrawOnBoard then
-            chalkboard:DrawOnBoard(hitPos, color, size, isNewLine)
+            chalkboard:DrawOnBoard(hitPos, color, size, isNewLine, player)
         end
     end)
-    
+
     net.Receive("ChalkErase", function()
         local chalkboard = net.ReadEntity()
         local hitPos = net.ReadVector()
         local size = net.ReadUInt(8)
         local isNewLine = net.ReadBool()
-        
+        local player = net.ReadEntity()
+
+        if player == LocalPlayer() then return end
+
         if IsValid(chalkboard) and chalkboard.EraseOnBoard then
-            chalkboard:EraseOnBoard(hitPos, size, isNewLine)
+            chalkboard:EraseOnBoard(hitPos, size, isNewLine, player)
         end
     end)
 end

@@ -1,20 +1,5 @@
 include("shared.lua")
 
--- Клиентские ConVar для синхронизации
--- CreateClientConVar("db_opt_limit_enabled", "1", true, false)
--- CreateClientConVar("db_opt_limit_max", "45000", true, false)
-
--- -- Обработчик синхронизации
--- net.Receive("DBPointLimit_Sync", function()
---     local enabled = net.ReadBool()
---     local maxPoints = net.ReadInt(32)
-    
---     RunConsoleCommand("db_opt_limit_enabled", enabled and "1" or "0")
---     RunConsoleCommand("db_opt_limit_max", tostring(maxPoints))
-    
---     print("[DB] Point limit synced: enabled=" .. tostring(enabled) .. ", max=" .. tostring(maxPoints))
--- end)
-
 chalkboardOSRTs = chalkboardOSRTs or {}
 local DRAW_DISTANCE = 200
 local MAX_DRAW_DISTANCE_SQ = DRAW_DISTANCE * DRAW_DISTANCE
@@ -27,7 +12,7 @@ chalkMaterial:SetInt("$translucent", 1)
 ChalkboardOSRTPool = ChalkboardOSRTPool or {
     free = {},
     used = {},
-    size = 3,
+    size = 5,
     format = {
         size = 1024,
         name = "ChalkboardOSRT"
@@ -36,6 +21,14 @@ ChalkboardOSRTPool = ChalkboardOSRTPool or {
 
 function ChalkboardOSRTPool:Initialize()
     if #self.free > 0 then return end
+    
+    -- Читаем конвар: 1 = 512×512 (low quality), всё остальное = 1024×1024
+    local quality = GetConVarNumber("db_opt_render_qlt")
+    if quality == 1 then
+        self.format.size = 512
+    else
+        self.format.size = 1024
+    end
     
     for i = 1, self.size do
         local rt = GetRenderTarget(self.format.name .. i, self.format.size, self.format.size)
@@ -47,7 +40,8 @@ function ChalkboardOSRTPool:Initialize()
             ["$nocull"] = 1,
             ["$translucent"] = 1,
             ["$alphatest"] = 1,
-            ["$alpha"] = 1
+            ["$alpha"] = 1,
+            ["$linear"] = 1
         })
         
         table.insert(self.free, {
@@ -117,11 +111,11 @@ function ENT:Initialize()
     self.interpStep = 2.5
     self.redrawDelay = 0.05
 
-    local quality = GetConVarNumber("render_qlt")
+    local quality = GetConVarNumber("db_opt_render_qlt")
     if quality == 1 then
         self.canvasSize = 512
-        self.interpStep = 4
-        self.redrawDelay = 0.066
+        self.interpStep = 3
+        self.redrawDelay = 0.05
     else
         self.canvasSize = 1024
         self.interpStep = 2.5
@@ -134,8 +128,8 @@ function ENT:Initialize()
     self.drawPointsBuffer = {}
     
     self.drawGrid = {}
-    self.gridCellSize = 64
-    self.dirtyRegions = {}
+    -- Сетка адаптируется под размер RT
+    self.gridCellSize = math.max(16, math.floor(self.canvasSize / 16))
     self.nextRedraw = 0
     self.drawQueue = {}
     self.lastDrawTime = 0
@@ -143,6 +137,9 @@ function ENT:Initialize()
     self.pendingDraw = false
     self.LastErasePos = nil
     self.pointCounter = 0
+    
+    self._needsFullRedraw = false
+    self._lastEraseRedraw = 0
     
     self:InitializeChalkboard()
     
@@ -199,6 +196,13 @@ function ENT:ClearChalkboard()
     self.pointCounter = 0
     
     self:ForceRedraw()
+    local rtData = self:GetRTData()
+    if rtData and rtData.rt then
+        render.PushRenderTarget(rtData.rt)
+        render.Clear(0, 0, 0, 0)
+        render.PopRenderTarget()
+        self._needsFullRedraw = false
+    end
 end
 
 function ENT:ClearPlayerDrawings(player)
@@ -273,15 +277,11 @@ function ENT:LocalToTextureCoords(localPos)
 end
 
 function ENT:IsPointOnBoard(localPos)
-
-    
     local mins, maxs = self:GetChalkboardBounds()
     
-    local result = localPos.x >= mins.x and localPos.x <= maxs.x and
-                   localPos.y >= mins.y and localPos.y <= maxs.y and
-                   localPos.z >= mins.z and localPos.z <= maxs.z
-    
-    return result
+    return localPos.x >= mins.x and localPos.x <= maxs.x and
+           localPos.y >= mins.y and localPos.y <= maxs.y and
+           localPos.z >= mins.z and localPos.z <= maxs.z
 end
 
 function ENT:GetRTData()
@@ -353,17 +353,14 @@ function ENT:FlushDrawQueue()
 end
 
 function ENT:RemoveOldestPoint()
-
     if not self.drawPointsBuffer then return end
 
     local oldest = table.remove(self.drawPointsBuffer, 1)
-
     if not oldest then return end
 
     oldest.__removed = true
 
     local playerPoints = self.PlayerDrawData[oldest.playerID]
-
     if playerPoints then
         for k, v in ipairs(playerPoints) do
             if v == oldest then
@@ -374,11 +371,9 @@ function ENT:RemoveOldestPoint()
     end
 
     self:ForceRedraw()
-
 end
 
 function ENT:DrawOnBoard(hitPos, color, size, isNewLine, player)
-
     if not IsValid(self) then return end
     
     local entIndex = self:EntIndex()
@@ -399,7 +394,8 @@ function ENT:DrawOnBoard(hitPos, color, size, isNewLine, player)
     local texCoordX, texCoordY = self:LocalToTextureCoords(localPos)
     
     local canvasSize = chalkboardOSRTs[entIndex].size or 1024
-    local scaleFactor = 1024 / canvasSize
+    -- Инвертированный scaleFactor: при 512 = 0.5, при 1024 = 1
+    local scaleFactor = canvasSize / 1024
     
     local currentX = texCoordX * canvasSize
     local currentY = texCoordY * canvasSize
@@ -419,8 +415,9 @@ function ENT:DrawOnBoard(hitPos, color, size, isNewLine, player)
     local isDuplicate = false
     local lastPoint = self.PlayerDrawData[playerID][#self.PlayerDrawData[playerID]]
     if lastPoint and not isNewLine then
+        local dupThreshold = math.max(0.5, 1 * scaleFactor)
         local dist = math.sqrt((currentX - lastPoint.x)^2 + (currentY - lastPoint.y)^2)
-        if dist < 1 then
+        if dist < dupThreshold then
             isDuplicate = true
         end
     end
@@ -459,8 +456,10 @@ function ENT:DrawOnBoard(hitPos, color, size, isNewLine, player)
         if lastPlayerPos and not isNewLine then
             local lastX, lastY = lastPlayerPos.x, lastPlayerPos.y
             local dist = math.sqrt((currentX - lastX)^2 + (currentY - lastY)^2)
-            if dist > 2 then
-                local steps = math.max(2, math.floor(dist / 1.5))
+            local interpThreshold = math.max(1, 2 * scaleFactor)
+            local interpStep = math.max(0.5, 1.5 * scaleFactor)
+            if dist > interpThreshold then
+                local steps = math.max(2, math.floor(dist / interpStep))
                 for i = 1, steps - 1 do
                     local t = i / steps
                     local lineX = lastX + (currentX - lastX) * t
@@ -501,13 +500,6 @@ function ENT:DrawOnBoard(hitPos, color, size, isNewLine, player)
         if #self.drawQueue > 50 then
             self:FlushDrawQueue()
         end
-        
-        self.dirtyRegions[#self.dirtyRegions + 1] = {
-            x = currentX - pointW, 
-            y = currentY - pointH, 
-            w = pointW * 2, 
-            h = pointH * 2
-        }
     end
 end
 
@@ -528,10 +520,12 @@ function ENT:EraseOnBoard(hitPos, size, isNewLine, player)
 
     local texCoordX, texCoordY = self:LocalToTextureCoords(localPos)
     local canvasSize = chalkboardOSRTs[entIndex].size or 1024
+    local scaleFactor = canvasSize / 1024
     local currentX = texCoordX * canvasSize
     local currentY = texCoordY * canvasSize
     local eraseSize = size or 20
-    local eraseRadius = eraseSize / 2
+    -- Радиус стирания тоже масштабируется
+    local eraseRadius = (eraseSize / 2) * scaleFactor
 
     if isNewLine then
         self.LastErasePos = nil
@@ -545,8 +539,10 @@ function ENT:EraseOnBoard(hitPos, size, isNewLine, player)
         local lastX, lastY = self.LastErasePos.x, self.LastErasePos.y
         local dist = math.sqrt((currentX - lastX)^2 + (currentY - lastY)^2)
         
-        if dist > 2 then
-            local steps = math.max(2, math.floor(dist / 2))
+        local interpThreshold = math.max(1, 2 * scaleFactor)
+        local interpStep = math.max(0.5, 2 * scaleFactor)
+        if dist > interpThreshold then
+            local steps = math.max(2, math.floor(dist / interpStep))
             for i = 1, steps - 1 do
                 local t = i / steps
                 local lineX = lastX + (currentX - lastX) * t
@@ -594,44 +590,39 @@ function ENT:EraseAtPosition(x, y, radius, playerID)
     end
     
     if erasedCount > 0 then
-        self.dirtyRegions[#self.dirtyRegions + 1] = {
-            x = x - radius, 
-            y = y - radius, 
-            w = radius * 2, 
-            h = radius * 2
-        }
-        self.nextRedraw = 0
+        self._needsFullRedraw = true
+        local now = CurTime()
+        if now - (self._lastEraseRedraw or 0) >= 0.15 then
+            self._lastEraseRedraw = now
+            self:ProcessRedraw()
+        end
     end
 end
 
 function ENT:ProcessRedraw()
-    if not self.dirtyRegions or #self.dirtyRegions == 0 then return end
+    if not self._needsFullRedraw then return end
+    self._needsFullRedraw = false
     
     local entIndex = self:EntIndex()
     local rtData = self:GetRTData()
     if not rtData or not rtData.rt then return end
     
     local newBuffer = {}
-    local hasRemoved = false
     for _, point in ipairs(self.drawPointsBuffer) do
         if not point.__removed then
             table.insert(newBuffer, point)
-        else
-            hasRemoved = true
         end
     end
+    self.drawPointsBuffer = newBuffer
     
-    if hasRemoved then
-        self.drawPointsBuffer = newBuffer
-        for plyID, data in pairs(self.PlayerDrawData) do
-            local newPlayerData = {}
-            for _, point in ipairs(data) do
-                if not point.__removed then
-                    table.insert(newPlayerData, point)
-                end
+    for plyID, data in pairs(self.PlayerDrawData) do
+        local newPlayerData = {}
+        for _, point in ipairs(data) do
+            if not point.__removed then
+                table.insert(newPlayerData, point)
             end
-            self.PlayerDrawData[plyID] = newPlayerData
         end
+        self.PlayerDrawData[plyID] = newPlayerData
     end
     
     render.PushRenderTarget(rtData.rt)
@@ -640,12 +631,10 @@ function ENT:ProcessRedraw()
     
     self:DrawPointsOnRT(self.drawPointsBuffer)
     self:UpdateChalkboardMaterial()
-    
-    self.dirtyRegions = {}
 end
 
 function ENT:ForceRedraw()
-    self.dirtyRegions = { {x = 0, y = 0, w = self.canvasSize, h = self.canvasSize} }
+    self._needsFullRedraw = true
     self.nextRedraw = 0
 end
 
@@ -691,33 +680,12 @@ function ENT:DrawChalkboard()
     local bottomLeft = pos + (up * (-halfHeight)) + (right * (-halfWidth))
     
     local lightColor = render.GetLightColor(pos)
-
-        
+    
     render.SetBlend(1)
     render.SetColorModulation(lightColor.x, lightColor.y, lightColor.z)
     render.SetMaterial(mat)
     render.DrawQuad(topLeft, topRight, bottomRight, bottomLeft)
     render.SetColorModulation(1, 1, 1)
-    
-    -- -- Зеленые линии - границы хоста
-    -- local green = Color(0, 255, 0)
-    -- render.DrawLine(topLeft, topRight, green, true)
-    -- render.DrawLine(topRight, bottomRight, green, true)
-    -- render.DrawLine(bottomRight, bottomLeft, green, true)
-    -- render.DrawLine(bottomLeft, topLeft, green, true)
-
-    -- -- Синяя рамка
-    -- local blue = Color(0, 100, 255)
-    
-    -- local TL = self:LocalToWorld(Vector(DRAW_BOUNDS_OFFSET_X, -halfWidth + DRAW_BOUNDS_OFFSET_Y, halfHeight + DRAW_BOUNDS_OFFSET_Z))
-    -- local TR = self:LocalToWorld(Vector(DRAW_BOUNDS_OFFSET_X, halfWidth + DRAW_BOUNDS_OFFSET_Y, halfHeight + DRAW_BOUNDS_OFFSET_Z))
-    -- local BR = self:LocalToWorld(Vector(DRAW_BOUNDS_OFFSET_X, halfWidth + DRAW_BOUNDS_OFFSET_Y, -halfHeight + DRAW_BOUNDS_OFFSET_Z))
-    -- local BL = self:LocalToWorld(Vector(DRAW_BOUNDS_OFFSET_X, -halfWidth + DRAW_BOUNDS_OFFSET_Y, -halfHeight + DRAW_BOUNDS_OFFSET_Z))
-
-    -- render.DrawLine(TL, TR, blue, true)
-    -- render.DrawLine(TR, BR, blue, true)
-    -- render.DrawLine(BR, BL, blue, true)
-    -- render.DrawLine(BL, TL, blue, true)
 end
 
 function ENT:Draw()
@@ -727,6 +695,9 @@ function ENT:Draw()
 end
 
 function ENT:Think()
+    if self._needsFullRedraw == nil then self._needsFullRedraw = false end
+    if self._lastEraseRedraw == nil then self._lastEraseRedraw = 0 end
+
     local entIndex = self:EntIndex()
     if chalkboardOSRTs[entIndex] and chalkboardOSRTs[entIndex].poolData then
         chalkboardOSRTs[entIndex].poolData.lastUsed = CurTime()
@@ -735,19 +706,24 @@ function ENT:Think()
     self:UpdateLight()
     self:UpdateProjectedLight()
     self:UpdateProjector()
+    
     local ply = LocalPlayer()
     if IsValid(ply) then
         local distSq = ply:GetPos():DistToSqr(self:GetPos())
         if distSq > 250000 then
+            self.drawThrottleTime = 0.2
+        elseif distSq > 45000 and distSq < 100000 then
             self.drawThrottleTime = 0.1
         else
             self.drawThrottleTime = 0.016
         end
     end
     
-    if CurTime() > (self.nextRedraw or 0) then
-        self:ProcessRedraw()
-        self.nextRedraw = CurTime() + 0.2
+    if self._needsFullRedraw then
+        if CurTime() - (self._lastEraseRedraw or 0) >= 0.05 then
+            self:ProcessRedraw()
+            self._lastEraseRedraw = CurTime()
+        end
     end
     
     self:NextThink(CurTime() + 0.1)
@@ -872,7 +848,6 @@ function ENT:UpdateProjectedLight()
 end
 
 function ENT:DrawLampGlow()
-
     if not self:GetLightEnabled() or not self.LampSprite then return end
     
     local lightColor = self:GetLightColor()
@@ -926,7 +901,9 @@ net.Receive("ChalkDraw", function()
     local size = net.ReadUInt(8)
     local isNewLine = net.ReadBool()
     local player = net.ReadEntity()
-    
+
+    if player == LocalPlayer() then return end
+
     if IsValid(chalkboard) and chalkboard.DrawOnBoard then
         chalkboard:DrawOnBoard(hitPos, color, size, isNewLine, player)
     end
@@ -938,7 +915,9 @@ net.Receive("ChalkErase", function()
     local size = net.ReadUInt(8)
     local isNewLine = net.ReadBool()
     local player = net.ReadEntity()
-    
+
+    if player == LocalPlayer() then return end
+
     if IsValid(chalkboard) and chalkboard.EraseOnBoard then
         chalkboard:EraseOnBoard(hitPos, size, isNewLine, player)
     end
@@ -959,14 +938,5 @@ net.Receive("ChalkboardClearPlayer", function()
     end
 end)
 
-hook.Add("KeyRelease", "ChalkboardForceRedraw", function(ply, key)
-    if key == IN_ATTACK or key == IN_ATTACK2 then
-        local tr = ply:GetEyeTrace()
-        local ent = tr.Entity
-        if IsValid(ent) and (ent:GetClass() == "chalkboard" or ent:GetClass() == "chalkboard_oversized") then
-            if ent.ForceRedraw then
-                ent:ForceRedraw()
-            end
-        end
-    end
-end)
+-- KeyRelease хук удалён: он дёргал ForceRedraw (полную перерисовку 100k+ точек)
+-- после каждого отпускания ЛКМ/ПКМ, что убивало FPS при активном рисовании.

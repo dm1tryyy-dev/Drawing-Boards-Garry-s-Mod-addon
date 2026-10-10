@@ -20,6 +20,9 @@ if CLIENT then
     BoardSaveSystem.LoadSelectedBtn = nil
     BoardSaveSystem.DeleteSelectedBtn = nil
 
+    -- Пауза между последовательными загрузками (сек)
+    BoardSaveSystem.LoadDelayBetween = 1.0
+
     if file.Exists("board_save_key.txt", "DATA") then
         local savedKey = tonumber(file.Read("board_save_key.txt", "DATA"))
         if savedKey then BoardSaveSystem.SaveKey = savedKey end
@@ -184,13 +187,11 @@ if CLIENT then
         local rtData = nil
         local entIndex = board:EntIndex()
         
-        -- Проверяем все возможные RT хранилища
         if chalkboardRTs then rtData = chalkboardRTs[entIndex] end
         if not rtData and chalkboardOSRTs then rtData = chalkboardOSRTs[entIndex] end
         if not rtData and whiteboardRTs then rtData = whiteboardRTs[entIndex] end
         if not rtData and whiteboardOSRTs then rtData = whiteboardOSRTs[entIndex] end
         if not rtData and littleWhiteboardRTs then rtData = littleWhiteboardRTs[entIndex] end
-        -- ДОБАВЛЯЕМ ПРОВЕРКУ ДЛЯ TECH_PANEL
         if not rtData and TechPanelRTs then rtData = TechPanelRTs[entIndex] end
         
         if not rtData or not rtData.rt then
@@ -199,7 +200,6 @@ if CLIENT then
             return
         end
         
-        -- НЕ очищаем RT если merge
         if not merge then
             render.PushRenderTarget(rtData.rt)
             render.Clear(0, 0, 0, 0)
@@ -381,6 +381,11 @@ if CLIENT then
         end
     end)
     
+    -- ============================================================
+    -- ЗАГРУЗКА: следующее сохранение запрашивается через
+    -- BoardSaveSystem.LoadDelayBetween секунд после полного
+    -- получения текущего.
+    -- ============================================================
     net.Receive("BoardSave_SendDrawingChunk", function()
         local saveName = net.ReadString()
         local dataLen = net.ReadUInt(16)
@@ -407,19 +412,28 @@ if CLIENT then
                         if name == saveName then table.remove(BoardSaveSystem.PendingLoads, i); break end
                     end
                 end
+                
                 BoardSaveSystem.LoadPointsToBoard(BoardSaveSystem.CurrentBoard, points, shouldMerge)
                 notification.AddLegacy("Loaded: " .. saveName .. " (" .. #points .. " points)", NOTIFY_GENERIC, 3)
+                
+                BoardSaveSystem.IsLoading = false
+                BoardSaveSystem.LoadingPoints = nil
+                
                 if BoardSaveSystem.PendingLoads and #BoardSaveSystem.PendingLoads > 0 then
-                    timer.Simple(0.1, function()
+                    timer.Simple(BoardSaveSystem.LoadDelayBetween, function()
+                        if not BoardSaveSystem.PendingLoads or #BoardSaveSystem.PendingLoads == 0 then return end
                         BoardSaveSystem.RequestLoadSave(BoardSaveSystem.PendingLoads[1], BoardSaveSystem.CurrentWeaponType)
                     end)
                 else
                     BoardSaveSystem.LoadedCount = 0
-                    BoardSaveSystem.CloseMenu()
+                    if BoardSaveSystem.UI and BoardSaveSystem.UI:IsValid() then
+                        BoardSaveSystem.CloseMenu()
+                    end
                 end
+            else
+                BoardSaveSystem.IsLoading = false
+                BoardSaveSystem.LoadingPoints = nil
             end
-            BoardSaveSystem.LoadingPoints = nil
-            BoardSaveSystem.IsLoading = false
         end
     end)
     
@@ -814,11 +828,27 @@ if CLIENT then
             local selected = {}
             for saveName, _ in pairs(BoardSaveSystem.SelectedSaves) do table.insert(selected, saveName) end
             if #selected >= 2 then
-                BoardSaveSystem.PendingLoads = {}
-                for _, name in ipairs(selected) do table.insert(BoardSaveSystem.PendingLoads, name) end
-                BoardSaveSystem.LoadedCount = 0
-                BoardSaveSystem.RequestLoadSave(BoardSaveSystem.PendingLoads[1], weaponType)
-                surface.PlaySound("garrysmod/ui_click.wav")
+                Derma_Query("Load " .. #selected .. " drawings sequentially?",
+                    "Confirm Load",
+                    "Yes", function()
+                        BoardSaveSystem.PendingLoads = {}
+                        for _, name in ipairs(selected) do table.insert(BoardSaveSystem.PendingLoads, name) end
+                        BoardSaveSystem.LoadedCount = 0
+                        BoardSaveSystem.RequestLoadSave(BoardSaveSystem.PendingLoads[1], weaponType)
+                        surface.PlaySound("garrysmod/ui_click.wav")
+                        -- Закрываем меню сразу — загрузка идёт в фоне.
+                        -- CurrentBoard и CurrentWeaponType НЕ сбрасываем, они нужны фоновой загрузке.
+                        local savedBoard = BoardSaveSystem.CurrentBoard
+                        local savedWeaponType = BoardSaveSystem.CurrentWeaponType
+                        BoardSaveSystem.CloseMenu()
+                        BoardSaveSystem.CurrentBoard = savedBoard
+                        BoardSaveSystem.CurrentWeaponType = savedWeaponType
+                        -- PendingLoads/LoadedCount тоже восстанавливаем — CloseMenu их сбрасывает.
+                        BoardSaveSystem.PendingLoads = {}
+                        for _, name in ipairs(selected) do table.insert(BoardSaveSystem.PendingLoads, name) end
+                        BoardSaveSystem.LoadedCount = 0
+                    end,
+                    "No", function() end)
             end
         end
         
@@ -951,7 +981,6 @@ if CLIENT then
                                 self.Selected = true
                             end
                         else
-                            -- Одиночное выделение
                             BoardSaveSystem.SelectedSaves = {}
                             for _, row in ipairs(BoardSaveSystem.SavesRows) do
                                 if IsValid(row) then row.Selected = false end

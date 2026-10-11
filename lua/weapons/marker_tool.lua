@@ -465,13 +465,19 @@ end
 function SWEP:PrimaryAttack()
     local owner = self:GetOwner()
     if not IsValid(owner) then return end
+
+    -- Блокировка в геометрическом режиме (без CLIENT — работает и на сервере)
+    if DrawingGeometry and DrawingGeometry.IsGeometryMode
+       and DrawingGeometry.IsGeometryMode() then
+        return
+    end
+
     local tr = owner:GetEyeTrace()
     if IsValid(tr.Entity) and self:IsSupportedBoard(tr.Entity) then
         local sizeValue = self:GetDrawSizeValue()
         if CLIENT then
             local drawColor = self:GetDrawColor()
 
-            -- Отправляем на сервер (для синхронизации другим игрокам)
             net.Start("MarkerDraw")
                 net.WriteEntity(tr.Entity)
                 net.WriteVector(tr.HitPos)
@@ -480,7 +486,6 @@ function SWEP:PrimaryAttack()
                 net.WriteBool(true)
             net.SendToServer()
 
-            -- ЛОКАЛЬНОЕ применение (мгновенно, не ждём echo от сервера)
             if tr.Entity.DrawOnBoard then
                 tr.Entity:DrawOnBoard(tr.HitPos, drawColor, sizeValue or 7, true, owner)
             end
@@ -497,7 +502,6 @@ function SWEP:SecondaryAttack()
     if IsValid(tr.Entity) and self:IsSupportedBoard(tr.Entity) then
         local eraseSizeValue = self:GetEraseSizeValue()
         if CLIENT then
-            -- Отправляем на сервер
             net.Start("MarkerErase")
                 net.WriteEntity(tr.Entity)
                 net.WriteVector(tr.HitPos)
@@ -505,7 +509,6 @@ function SWEP:SecondaryAttack()
                 net.WriteBool(true)
             net.SendToServer()
 
-            -- ЛОКАЛЬНОЕ применение (мгновенно)
             if tr.Entity.EraseOnBoard then
                 tr.Entity:EraseOnBoard(tr.HitPos, eraseSizeValue or 12, true, owner)
             end
@@ -556,15 +559,18 @@ function SWEP:Think()
     end
 
     if CLIENT then
+        -- Блокировка всего рисования в геометрическом режиме
+        local geoBlocked = DrawingGeometry and DrawingGeometry.IsGeometryMode
+            and DrawingGeometry.IsGeometryMode()
+
         -- РИСОВАНИЕ: пока держим ЛКМ
-        if isAttacking and CurTime() >= self:GetNextPrimaryFire() then
+        if not geoBlocked and isAttacking and CurTime() >= self:GetNextPrimaryFire() then
             local tr = owner:GetEyeTrace()
             if IsValid(tr.Entity) and self:IsSupportedBoard(tr.Entity) then
                 local isNewLine = not self.WasAttacking
                 local sizeValue = self:GetDrawSizeValue()
                 local drawColor = self:GetDrawColor()
 
-                -- Сеть (для других игроков)
                 net.Start("MarkerDraw")
                     net.WriteEntity(tr.Entity)
                     net.WriteVector(tr.HitPos)
@@ -573,7 +579,6 @@ function SWEP:Think()
                     net.WriteBool(isNewLine)
                 net.SendToServer()
 
-                -- Локально (мгновенно у себя)
                 if tr.Entity.DrawOnBoard then
                     tr.Entity:DrawOnBoard(tr.HitPos, drawColor, sizeValue or 7, isNewLine, owner)
                 end
@@ -590,7 +595,6 @@ function SWEP:Think()
                 local isNewLine = not self.WasAttacking2
                 local eraseSizeValue = self:GetEraseSizeValue()
 
-                -- Сеть
                 net.Start("MarkerErase")
                     net.WriteEntity(tr.Entity)
                     net.WriteVector(tr.HitPos)
@@ -598,7 +602,6 @@ function SWEP:Think()
                     net.WriteBool(isNewLine)
                 net.SendToServer()
 
-                -- Локально
                 if tr.Entity.EraseOnBoard then
                     tr.Entity:EraseOnBoard(tr.HitPos, eraseSizeValue or 12, isNewLine, owner)
                 end
@@ -608,10 +611,11 @@ function SWEP:Think()
             end
         end
 
-        -- Финальная отправка при отпускании кнопок:
-        -- закрывает разрыв между последней отправленной точкой и текущей
-        -- позицией курсора в момент отпускания.
-        if self._prevPrimaryDown and not isAttacking then
+        -- Финальная отправка при отпускании кнопок.
+        -- В геометрическом режиме НЕ отправляем — иначе появляется
+        -- лишняя точка с isNewLine=false, и доска интерполирует
+        -- линию между старой и новой точкой.
+        if not geoBlocked and self._prevPrimaryDown and not isAttacking then
             local tr = owner:GetEyeTrace()
             if IsValid(tr.Entity) and self:IsSupportedBoard(tr.Entity) then
                 local sizeValue = self:GetDrawSizeValue()
@@ -622,7 +626,7 @@ function SWEP:Think()
                     net.WriteVector(tr.HitPos)
                     net.WriteColor(drawColor)
                     net.WriteUInt(sizeValue or 7, 8)
-                    net.WriteBool(false)  -- интерполировать от последней позиции
+                    net.WriteBool(false)
                 net.SendToServer()
 
                 if tr.Entity.DrawOnBoard then
@@ -640,7 +644,7 @@ function SWEP:Think()
                     net.WriteEntity(tr.Entity)
                     net.WriteVector(tr.HitPos)
                     net.WriteUInt(eraseSizeValue or 12, 8)
-                    net.WriteBool(false)  -- интерполировать от последней позиции
+                    net.WriteBool(false)
                 net.SendToServer()
 
                 if tr.Entity.EraseOnBoard then
@@ -649,7 +653,12 @@ function SWEP:Think()
             end
         end
 
-        self._prevPrimaryDown = isAttacking
+        -- Сохраняем состояние только когда геометрия выключена.
+        if not geoBlocked then
+            self._prevPrimaryDown = isAttacking
+        else
+            self._prevPrimaryDown = false
+        end
         self._prevSecondaryDown = isAttacking2
     end
 end
@@ -678,7 +687,6 @@ if CLIENT then
         end
     end)
 
-    -- ВАЖНО: собственный echo от сервера игнорируем — уже применено локально
     net.Receive("MarkerDraw", function()
         local whiteboard = net.ReadEntity()
         local hitPos = net.ReadVector()

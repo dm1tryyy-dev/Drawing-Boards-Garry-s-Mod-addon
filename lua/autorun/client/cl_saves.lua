@@ -20,7 +20,6 @@ if CLIENT then
     BoardSaveSystem.LoadSelectedBtn = nil
     BoardSaveSystem.DeleteSelectedBtn = nil
 
-    -- Пауза между последовательными загрузками (сек)
     BoardSaveSystem.LoadDelayBetween = 1.0
 
     if file.Exists("board_save_key.txt", "DATA") then
@@ -108,6 +107,32 @@ if CLIENT then
         end
         return savePoints
     end
+
+    -- Принудительно вычистить удалённые точки из буфера доски.
+    -- Вызывается перед сохранением, чтобы гарантировать актуальный список.
+    function BoardSaveSystem.ForceCompactBoardBuffer(board)
+        if not IsValid(board) or not board.drawPointsBuffer then return end
+
+        local newBuffer = {}
+        for _, p in ipairs(board.drawPointsBuffer) do
+            if not p.__removed then
+                table.insert(newBuffer, p)
+            end
+        end
+        board.drawPointsBuffer = newBuffer
+
+        if board.PlayerDrawData then
+            for plyID, data in pairs(board.PlayerDrawData) do
+                local newPlayerData = {}
+                for _, p in ipairs(data) do
+                    if not p.__removed then
+                        table.insert(newPlayerData, p)
+                    end
+                end
+                board.PlayerDrawData[plyID] = newPlayerData
+            end
+        end
+    end
     
     function BoardSaveSystem.UpdateSelectedCounter()
         local count = 0
@@ -166,20 +191,31 @@ if CLIENT then
         local currentPoints = board.drawPointsBuffer or {}
         local startOrder = #currentPoints
         
+        local playerDrawData = board.PlayerDrawData or {}
+board.PlayerDrawData = playerDrawData
+
         for i, pointData in ipairs(pointsToLoad) do
             local newPoint = {
                 x = pointData.x, y = pointData.y,
                 color = Color(pointData.r, pointData.g, pointData.b),
                 w = pointData.w, h = pointData.h,
-                playerID = pointData.playerID,
+                playerID = pointData.playerID or "saved",
                 timestamp = CurTime(),
                 __removed = false,
                 __order = startOrder + i
             }
             table.insert(currentPoints, newPoint)
             table.insert(batchPoints, newPoint)
+
+            -- Добавляем в drawGrid, чтобы стирание работало
+            board:AddPointToGrid(newPoint)
+
+            -- Добавляем в PlayerDrawData, чтобы стирание и очистка по игроку работали
+            local pid = newPoint.playerID
+            if not playerDrawData[pid] then playerDrawData[pid] = {} end
+            table.insert(playerDrawData[pid], newPoint)
         end
-        
+
         board.drawPointsBuffer = currentPoints
         board.dirtyRegions = {}
         board.nextRedraw = 0
@@ -193,6 +229,7 @@ if CLIENT then
         if not rtData and whiteboardOSRTs then rtData = whiteboardOSRTs[entIndex] end
         if not rtData and littleWhiteboardRTs then rtData = littleWhiteboardRTs[entIndex] end
         if not rtData and TechPanelRTs then rtData = TechPanelRTs[entIndex] end
+        if not rtData and TechPanelOSRTs then rtData = TechPanelOSRTs[entIndex] end
         
         if not rtData or not rtData.rt then
             notification.AddLegacy("No RT found for " .. board:GetClass() .. "!", NOTIFY_ERROR, 3)
@@ -381,11 +418,6 @@ if CLIENT then
         end
     end)
     
-    -- ============================================================
-    -- ЗАГРУЗКА: следующее сохранение запрашивается через
-    -- BoardSaveSystem.LoadDelayBetween секунд после полного
-    -- получения текущего.
-    -- ============================================================
     net.Receive("BoardSave_SendDrawingChunk", function()
         local saveName = net.ReadString()
         local dataLen = net.ReadUInt(16)
@@ -536,6 +568,10 @@ if CLIENT then
         if not canSave then return end
         BoardSaveSystem.CurrentBoard = board
         BoardSaveSystem.CurrentWeaponType = weaponType
+
+        -- Принудительно чистим буфер от удалённых точек перед сохранением
+        BoardSaveSystem.ForceCompactBoardBuffer(board)
+
         local points = board.drawPointsBuffer or {}
         local savePoints = BoardSaveSystem.ConvertPointsToSave(points)
         if #savePoints == 0 then
@@ -672,7 +708,6 @@ if CLIENT then
             draw.SimpleText(title, "BoardSave_Title", w/2, 28, Color(240, 240, 240), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
             local boardClass = board:GetClass() or "Unknown"
             draw.SimpleText("Target board: " .. boardClass, "BoardSave_Label", w/2, 60, Color(150, 150, 150), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-            draw.SimpleText("IMPORTANT: Loaded drawings cannot be edited (erased) locally.", "BoardSave_Button", w/2, 88, Color(255, 200, 100), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         end
         
         local clearAllBtn = vgui.Create("DButton", frame)
@@ -836,14 +871,11 @@ if CLIENT then
                         BoardSaveSystem.LoadedCount = 0
                         BoardSaveSystem.RequestLoadSave(BoardSaveSystem.PendingLoads[1], weaponType)
                         surface.PlaySound("garrysmod/ui_click.wav")
-                        -- Закрываем меню сразу — загрузка идёт в фоне.
-                        -- CurrentBoard и CurrentWeaponType НЕ сбрасываем, они нужны фоновой загрузке.
                         local savedBoard = BoardSaveSystem.CurrentBoard
                         local savedWeaponType = BoardSaveSystem.CurrentWeaponType
                         BoardSaveSystem.CloseMenu()
                         BoardSaveSystem.CurrentBoard = savedBoard
                         BoardSaveSystem.CurrentWeaponType = savedWeaponType
-                        -- PendingLoads/LoadedCount тоже восстанавливаем — CloseMenu их сбрасывает.
                         BoardSaveSystem.PendingLoads = {}
                         for _, name in ipairs(selected) do table.insert(BoardSaveSystem.PendingLoads, name) end
                         BoardSaveSystem.LoadedCount = 0

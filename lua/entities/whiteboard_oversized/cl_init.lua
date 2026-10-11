@@ -4,6 +4,10 @@ whiteboardOSRTs = whiteboardOSRTs or {}
 local DRAW_DISTANCE = 200
 local MAX_DRAW_DISTANCE_SQ = DRAW_DISTANCE * DRAW_DISTANCE
 local WHITEBOARD_ASPECT = 84.5 / 48.4
+local DEBUG_RT = false   -- включить/выключить отладочные рамки доски
+local DEBUG_ERASE = false -- включить/выключить отладочные рамки стирания
+
+local ERASE_DEBUG_LIFETIME = 1.5
 
 local markerMaterial = Material("render/marker_draw_unit")
 markerMaterial:SetFloat("$alpha", 1)
@@ -138,6 +142,11 @@ function ENT:Initialize()
 
     self._needsFullRedraw = false
     self._lastEraseRedraw = 0
+
+    self._bufferDirty = false
+    self._lastCompact = 0
+
+    self._debugEraseRects = {}
 
     self:InitializeWhiteboard()
 end
@@ -386,7 +395,6 @@ function ENT:DrawOnBoard(hitPos, color, size, isNewLine, player)
     local texCoordX, texCoordY = self:LocalToTextureCoords(localPos)
 
     local canvasSize = whiteboardOSRTs[entIndex].size or 1024
-    -- Инвертированный scaleFactor: при 512 = 0.5, при 1024 = 1
     local scaleFactor = canvasSize / 1024
 
     local currentX = texCoordX * canvasSize
@@ -495,6 +503,51 @@ function ENT:DrawOnBoard(hitPos, color, size, isNewLine, player)
     end
 end
 
+-- ============================================
+-- ОПТИМИЗИРОВАННОЕ СТИРАНИЕ
+-- ============================================
+function ENT:EraseOnRT(x, y, radius)
+    local rtData = self:GetRTData()
+    if not rtData or not rtData.rt then return end
+
+    -- Квадрат на доске с компенсацией WHITEBOARD_ASPECT.
+    local sideW = math.max(1, math.floor(radius * 2 + 0.5))
+    local sideH = math.max(1, math.floor(sideW * WHITEBOARD_ASPECT + 0.5))
+
+    local halfW = sideW * 0.5
+    local halfH = sideH * 0.5
+
+    local minX = math.max(0, math.floor(x - halfW))
+    local minY = math.max(0, math.floor(y - halfH))
+    local maxX = math.min(self.canvasSize, minX + sideW)
+    local maxY = math.min(self.canvasSize, minY + sideH)
+
+    if maxX - minX < sideW then minX = math.max(0, maxX - sideW) end
+    if maxY - minY < sideH then minY = math.max(0, maxY - sideH) end
+
+    if maxX <= minX or maxY <= minY then return end
+
+    if DEBUG_ERASE then
+        if not self._debugEraseRects then self._debugEraseRects = {} end
+        table.insert(self._debugEraseRects, {
+            minX = minX, minY = minY, maxX = maxX, maxY = maxY,
+            time = CurTime()
+        })
+    end
+
+    render.PushRenderTarget(rtData.rt)
+    render.OverrideAlphaWriteEnable(true, true)
+    cam.Start2D()
+
+    render.SetScissorRect(minX, minY, maxX, maxY, true)
+    render.Clear(0, 0, 0, 0)
+    render.SetScissorRect(0, 0, 0, 0, false)
+
+    cam.End2D()
+    render.OverrideAlphaWriteEnable(false)
+    render.PopRenderTarget()
+end
+
 function ENT:EraseOnBoard(hitPos, size, isNewLine, player)
     if not IsValid(self) then return end
 
@@ -516,8 +569,8 @@ function ENT:EraseOnBoard(hitPos, size, isNewLine, player)
     local currentX = texCoordX * canvasSize
     local currentY = texCoordY * canvasSize
     local eraseSize = size or 20
-    -- Радиус стирания масштабируется
-    local eraseRadius = (eraseSize / 2) * scaleFactor
+    -- Уменьшаем размер квадрата стирания в 1.5 раза
+    local eraseRadius = (eraseSize / 2) * scaleFactor / 1.5
 
     if isNewLine then
         self.LastErasePos = nil
@@ -557,6 +610,7 @@ function ENT:EraseAtPosition(x, y, radius, playerID)
 
     local erasedCount = 0
 
+    -- Проход 1: центр точки в радиусе
     for cellX = minCellX, maxCellX do
         for cellY = minCellY, maxCellY do
             local key = self:GetGridKey(cellX, cellY)
@@ -564,7 +618,7 @@ function ENT:EraseAtPosition(x, y, radius, playerID)
             if cell then
                 for i = #cell, 1, -1 do
                     local point = cell[i]
-                    if point and (not playerID or point.playerID == playerID) then
+                    if point then
                         local dx = point.x - x
                         local dy = point.y - y
                         if dx * dx + dy * dy <= radiusSq then
@@ -574,33 +628,67 @@ function ENT:EraseAtPosition(x, y, radius, playerID)
                         end
                     end
                 end
-                if #cell == 0 then
-                    self.drawGrid[key] = nil
-                end
+                if #cell == 0 then self.drawGrid[key] = nil end
             end
         end
     end
 
-    if erasedCount > 0 then
-        self._needsFullRedraw = true
-        local now = CurTime()
-        if now - (self._lastEraseRedraw or 0) >= 0.15 then
-            self._lastEraseRedraw = now
-            self:ProcessRedraw()
+    -- Вычисляем ровно те же границы, что и в EraseOnRT (с компенсацией ASPECT)
+    local sideW = math.max(1, math.floor(radius * 2 + 0.5))
+    local sideH = math.max(1, math.floor(sideW * WHITEBOARD_ASPECT + 0.5))
+    local halfW = sideW * 0.5
+    local halfH = sideH * 0.5
+
+    local padMinX = x - halfW
+    local padMaxX = x + halfW
+    local padMinY = y - halfH
+    local padMaxY = y + halfH
+
+    local padMinCellX = math.floor(padMinX / self.gridCellSize)
+    local padMaxCellX = math.floor(padMaxX / self.gridCellSize)
+    local padMinCellY = math.floor(padMinY / self.gridCellSize)
+    local padMaxCellY = math.floor(padMaxY / self.gridCellSize)
+
+    -- Проход 2: помечаем как удалённые точки, чьи ПИКСЕЛИ попали в зону затирания
+    for cellX = padMinCellX, padMaxCellX do
+        for cellY = padMinCellY, padMaxCellY do
+            local key = self:GetGridKey(cellX, cellY)
+            local cell = self.drawGrid[key]
+            if cell then
+                for i = #cell, 1, -1 do
+                    local point = cell[i]
+                    if point and not point.__removed then
+                        local halfW2 = (point.w or 8) * 0.5
+                        local halfH2 = (point.h or 8) * 0.5
+                        local pMinX = point.x - halfW2
+                        local pMaxX = point.x + halfW2
+                        local pMinY = point.y - halfH2
+                        local pMaxY = point.y + halfH2
+
+                        if pMaxX >= padMinX and pMinX <= padMaxX
+                           and pMaxY >= padMinY and pMinY <= padMaxY then
+                            point.__removed = true
+                            table.remove(cell, i)
+                            erasedCount = erasedCount + 1
+                        end
+                    end
+                end
+                if #cell == 0 then self.drawGrid[key] = nil end
+            end
         end
+    end
+
+    -- Затираем область на RT с теми же границами
+    self:EraseOnRT(x, y, radius)
+
+    if erasedCount > 0 then
+        self._bufferDirty = true
     end
 end
 
--- ============================================
--- ПЕРЕРИСОВКА И МАТЕРИАЛЫ
--- ============================================
-function ENT:ProcessRedraw()
-    if not self._needsFullRedraw then return end
-    self._needsFullRedraw = false
-
-    local entIndex = self:EntIndex()
-    local rtData = self:GetRTData()
-    if not rtData or not rtData.rt then return end
+function ENT:CompactBuffersIfNeeded()
+    if not self._bufferDirty then return end
+    self._bufferDirty = false
 
     local newBuffer = {}
     for _, point in ipairs(self.drawPointsBuffer) do
@@ -619,6 +707,20 @@ function ENT:ProcessRedraw()
         end
         self.PlayerDrawData[plyID] = newPlayerData
     end
+end
+
+-- ============================================
+-- ПЕРЕРИСОВКА И МАТЕРИАЛЫ
+-- ============================================
+function ENT:ProcessRedraw()
+    if not self._needsFullRedraw then return end
+    self._needsFullRedraw = false
+
+    local entIndex = self:EntIndex()
+    local rtData = self:GetRTData()
+    if not rtData or not rtData.rt then return end
+
+    self:CompactBuffersIfNeeded()
 
     render.PushRenderTarget(rtData.rt)
     render.Clear(0, 0, 0, 0)
@@ -630,6 +732,7 @@ end
 
 function ENT:ForceRedraw()
     self._needsFullRedraw = true
+    self._bufferDirty = true
     self.nextRedraw = 0
 end
 
@@ -685,15 +788,117 @@ function ENT:DrawWhiteboard()
     render.DrawQuad(topLeft, topRight, bottomRight, bottomLeft)
 end
 
+-- Переводит RT-координаты в мировые координаты доски
+function ENT:RTToWorld(rtX, rtY)
+    local pos = self:GetPos()
+    local ang = self:GetAngles()
+    ang:RotateAroundAxis(ang:Up(), 180)
+    local right = ang:Right()
+    local up = ang:Up()
+    local forward = ang:Forward()
+
+    pos = pos - forward
+    pos = pos + right
+    pos = pos + up * 0.01
+
+    local halfWidth = 84.5
+    local halfHeight = 48.4
+
+    local u = rtX / self.canvasSize
+    local v = rtY / self.canvasSize
+
+    local worldTopLeft = pos + up * halfHeight + right * (-halfWidth)
+    local worldXdir = right * (halfWidth * 2)
+    local worldYdir = up * (-halfHeight * 2)
+
+    return worldTopLeft + worldXdir * u + worldYdir * v
+end
+
+function ENT:DrawEraseDebug()
+    if not DEBUG_ERASE then return end
+    if not self._debugEraseRects then
+        self._debugEraseRects = {}
+        return
+    end
+
+    local now = CurTime()
+
+    for i = #self._debugEraseRects, 1, -1 do
+        local rect = self._debugEraseRects[i]
+        if now - rect.time > ERASE_DEBUG_LIFETIME then
+            table.remove(self._debugEraseRects, i)
+        end
+    end
+
+    if #self._debugEraseRects == 0 then return end
+
+    for _, rect in ipairs(self._debugEraseRects) do
+        local age = now - rect.time
+        local alpha = math.Clamp(255 * (1 - age / ERASE_DEBUG_LIFETIME), 0, 255)
+
+        local tl = self:RTToWorld(rect.minX, rect.minY)
+        local tr = self:RTToWorld(rect.maxX, rect.minY)
+        local br = self:RTToWorld(rect.maxX, rect.maxY)
+        local bl = self:RTToWorld(rect.minX, rect.maxY)
+
+        local col = Color(255, 0, 0, alpha)
+        render.DrawLine(tl, tr, col, true)
+        render.DrawLine(tr, br, col, true)
+        render.DrawLine(br, bl, col, true)
+        render.DrawLine(bl, tl, col, true)
+    end
+end
+
+function ENT:DrawRTDebug()
+    if not DEBUG_RT then return end
+
+    local entIndex = self:EntIndex()
+    if not whiteboardOSRTs[entIndex] or not whiteboardOSRTs[entIndex].rt then return end
+
+    local pos = self:GetPos()
+    local ang = self:GetAngles()
+    ang:RotateAroundAxis(ang:Up(), 180)
+    local right = ang:Right()
+    local up = ang:Up()
+    local forward = ang:Forward()
+
+    pos = pos - forward
+    pos = pos + right
+    pos = pos + up * 0.01
+
+    local halfWidth = 84.5
+    local halfHeight = 48.4
+
+    local topLeft     = pos + (up *  halfHeight) + (right * (-halfWidth))
+    local topRight    = pos + (up *  halfHeight) + (right * ( halfWidth))
+    local bottomRight = pos + (up * -halfHeight) + (right * ( halfWidth))
+    local bottomLeft  = pos + (up * -halfHeight) + (right * (-halfWidth))
+
+    local green = Color(0, 255, 0, 255)
+    render.DrawLine(topLeft,     topRight,    green, true)
+    render.DrawLine(topRight,    bottomRight, green, true)
+    render.DrawLine(bottomRight, bottomLeft,  green, true)
+    render.DrawLine(bottomLeft,  topLeft,     green, true)
+
+    render.DrawLine(topLeft,     bottomRight, Color(0, 255, 0, 80), true)
+    render.DrawLine(topRight,    bottomLeft,  Color(0, 255, 0, 80), true)
+end
+
 function ENT:Draw()
     self:DrawModel()
     self:DrawWhiteboard()
+    self:DrawEraseDebug()
     self:DrawLampGlow()
+    if DEBUG_RT then
+        self:DrawRTDebug()
+    end
 end
 
 function ENT:Think()
     if self._needsFullRedraw == nil then self._needsFullRedraw = false end
     if self._lastEraseRedraw == nil then self._lastEraseRedraw = 0 end
+    if self._bufferDirty == nil then self._bufferDirty = false end
+    if self._lastCompact == nil then self._lastCompact = 0 end
 
     local entIndex = self:EntIndex()
     if whiteboardOSRTs[entIndex] and whiteboardOSRTs[entIndex].poolData then
@@ -702,8 +907,6 @@ function ENT:Think()
 
     self:UpdateLight()
 
-    -- Адаптивный drawThrottleTime в зависимости от дистанции до игрока:
-    -- вблизи — почти мгновенно (0.016), в среднем диапазоне — 0.1, далеко — 0.2.
     local ply = LocalPlayer()
     if IsValid(ply) then
         local distSq = ply:GetPos():DistToSqr(self:GetPos())
@@ -721,6 +924,11 @@ function ENT:Think()
             self:ProcessRedraw()
             self._lastEraseRedraw = CurTime()
         end
+    end
+
+    if self._bufferDirty and CurTime() - (self._lastCompact or 0) > 1.0 then
+        self:CompactBuffersIfNeeded()
+        self._lastCompact = CurTime()
     end
 
     self:NextThink(CurTime() + 0.1)
@@ -866,6 +1074,3 @@ net.Receive("DBPointLimit_RemoveOldest", function()
         end
     end
 end)
-
--- KeyRelease хук удалён: он дёргал ForceRedraw (полную перерисовку 100k+ точек)
--- после каждого отпускания ЛКМ/ПКМ, что убивало FPS при активном рисовании.

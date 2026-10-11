@@ -4,7 +4,10 @@ chalkboardRTs = chalkboardRTs or {}
 local DRAW_DISTANCE = 200
 local MAX_DRAW_DISTANCE_SQ = DRAW_DISTANCE * DRAW_DISTANCE
 local CHALKBOARD_ASPECT = 40.3 / 21.7
-local DEBUG_RT = false   -- включить/выключить отладочные рамки
+local DEBUG_RT = false   -- включить/выключить отладочные рамки доски
+local DEBUG_ERASE = false -- включить/выключить отладочные рамки стирания
+
+local ERASE_DEBUG_LIFETIME = 1.5 -- сколько секунд показывать рамку
 
 local chalkMaterial = Material("render/chalk_draw_unit")
 chalkMaterial:SetFloat("$alpha", 1)
@@ -128,7 +131,6 @@ function ENT:Initialize()
     self.drawPointsBuffer = {}
     
     self.drawGrid = {}
-    -- Сетка адаптируется под размер RT: ~4-8 ячеек по стороне
     self.gridCellSize = math.max(8, math.floor(self.canvasSize / 4))
     self.nextRedraw = 0
     self.drawQueue = {}
@@ -140,6 +142,11 @@ function ENT:Initialize()
     
     self._needsFullRedraw = false
     self._lastEraseRedraw = 0
+    
+    self._bufferDirty = false
+    self._lastCompact = 0
+    
+    self._debugEraseRects = {}
     
     self:InitializeChalkboard()
     
@@ -392,9 +399,6 @@ function ENT:DrawOnBoard(hitPos, color, size, isNewLine, player)
     local texCoordX, texCoordY = self:LocalToTextureCoords(localPos)
     
     local canvasSize = chalkboardRTs[entIndex].size or 1024
-    -- ВАЖНО: при canvasSize = 1024 scaleFactor = 1 (без изменений).
-    -- При canvasSize = 256 scaleFactor = 0.25 — точка занимает 1/4 пикселей RT,
-    -- но при растягивании на доску визуально тот же размер.
     local scaleFactor = canvasSize / 1024
     
     local currentX = texCoordX * canvasSize
@@ -412,10 +416,13 @@ function ENT:DrawOnBoard(hitPos, color, size, isNewLine, player)
     
     self.PlayerColors[playerID] = color
 
+    -- if isNewLine then
+    --     self.PlayerLastDrawPos[playerID] = nil
+    -- end
+
     local isDuplicate = false
     local lastPoint = self.PlayerDrawData[playerID][#self.PlayerDrawData[playerID]]
     if lastPoint and not isNewLine then
-        -- Порог "дубликата" тоже масштабируется
         local dupThreshold = math.max(0.5, 1 * scaleFactor)
         local dist = math.sqrt((currentX - lastPoint.x)^2 + (currentY - lastPoint.y)^2)
         if dist < dupThreshold then
@@ -457,7 +464,6 @@ function ENT:DrawOnBoard(hitPos, color, size, isNewLine, player)
         if lastPlayerPos and not isNewLine then
             local lastX, lastY = lastPlayerPos.x, lastPlayerPos.y
             local dist = math.sqrt((currentX - lastX)^2 + (currentY - lastY)^2)
-            -- Порог и шаг интерполяции масштабируются под RT
             local interpThreshold = math.max(1, 2 * scaleFactor)
             local interpStep = math.max(0.5, 1.5 * scaleFactor)
             if dist > interpThreshold then
@@ -505,6 +511,54 @@ function ENT:DrawOnBoard(hitPos, color, size, isNewLine, player)
     end
 end
 
+-- ============================================================
+-- ОПТИМИЗИРОВАННОЕ СТИРАНИЕ
+-- ============================================================
+function ENT:EraseOnRT(x, y, radius)
+    local rtData = self:GetRTData()
+    if not rtData or not rtData.rt then return end
+
+    -- Хотим квадрат на доске. RT растягивается на доску неравномерно:
+    -- по X один RT-пиксель шире, чем по Y, в CHALKBOARD_ASPECT раз.
+    -- Поэтому в RT стороны должны быть: sideW по X и sideW * ASPECT по Y.
+    local sideW = math.max(1, math.floor(radius * 2 + 0.5))
+    local sideH = math.max(1, math.floor(sideW * CHALKBOARD_ASPECT + 0.5))
+
+    local halfW = sideW * 0.5
+    local halfH = sideH * 0.5
+
+    local minX = math.max(0, math.floor(x - halfW))
+    local minY = math.max(0, math.floor(y - halfH))
+    local maxX = math.min(self.canvasSize, minX + sideW)
+    local maxY = math.min(self.canvasSize, minY + sideH)
+
+    -- Клампим к краям RT, сохраняя размеры сторон.
+    if maxX - minX < sideW then minX = math.max(0, maxX - sideW) end
+    if maxY - minY < sideH then minY = math.max(0, maxY - sideH) end
+
+    if maxX <= minX or maxY <= minY then return end
+
+    if DEBUG_ERASE then
+        if not self._debugEraseRects then self._debugEraseRects = {} end
+        table.insert(self._debugEraseRects, {
+            minX = minX, minY = minY, maxX = maxX, maxY = maxY,
+            time = CurTime()
+        })
+    end
+
+    render.PushRenderTarget(rtData.rt)
+    render.OverrideAlphaWriteEnable(true, true)
+    cam.Start2D()
+
+    render.SetScissorRect(minX, minY, maxX, maxY, true)
+    render.Clear(0, 0, 0, 0)
+    render.SetScissorRect(0, 0, 0, 0, false)
+
+    cam.End2D()
+    render.OverrideAlphaWriteEnable(false)
+    render.PopRenderTarget()
+end
+
 function ENT:EraseOnBoard(hitPos, size, isNewLine, player)
     if not IsValid(self) then return end
     
@@ -527,9 +581,7 @@ function ENT:EraseOnBoard(hitPos, size, isNewLine, player)
     local currentX = texCoordX * canvasSize
     local currentY = texCoordY * canvasSize
     local eraseSize = size or 20
-    -- Радиус стирания тоже масштабируется: 20 пикселей в пространстве 1024
-    -- превращаются в 5 пикселей при RT 256.
-    local eraseRadius = (eraseSize / 2) * scaleFactor
+    local eraseRadius = (eraseSize / 2) * scaleFactor / 1.5
 
     if isNewLine then
         self.LastErasePos = nil
@@ -566,9 +618,10 @@ function ENT:EraseAtPosition(x, y, radius, playerID)
     local maxCellX = math.floor((x + radius) / self.gridCellSize)
     local minCellY = math.floor((y - radius) / self.gridCellSize)
     local maxCellY = math.floor((y + radius) / self.gridCellSize)
-    
+
     local erasedCount = 0
-    
+
+    -- Проход 1: центр точки в радиусе
     for cellX = minCellX, maxCellX do
         for cellY = minCellY, maxCellY do
             local key = self:GetGridKey(cellX, cellY)
@@ -576,7 +629,7 @@ function ENT:EraseAtPosition(x, y, radius, playerID)
             if cell then
                 for i = #cell, 1, -1 do
                     local point = cell[i]
-                    if point and (not playerID or point.playerID == playerID) then
+                    if point then
                         local dx = point.x - x
                         local dy = point.y - y
                         if dx * dx + dy * dy <= radiusSq then
@@ -586,31 +639,68 @@ function ENT:EraseAtPosition(x, y, radius, playerID)
                         end
                     end
                 end
-                if #cell == 0 then
-                    self.drawGrid[key] = nil
-                end
+                if #cell == 0 then self.drawGrid[key] = nil end
             end
         end
     end
-    
-    if erasedCount > 0 then
-        self._needsFullRedraw = true
-        local now = CurTime()
-        if now - (self._lastEraseRedraw or 0) >= 0.15 then
-            self._lastEraseRedraw = now
-            self:ProcessRedraw()
+
+    -- Вычисляем ровно те же границы, что и в EraseOnRT (с компенсацией ASPECT)
+    local sideW = math.max(1, math.floor(radius * 2 + 0.5))
+    local sideH = math.max(1, math.floor(sideW * CHALKBOARD_ASPECT + 0.5))
+    local halfW = sideW * 0.5
+    local halfH = sideH * 0.5
+
+    local padMinX = x - halfW
+    local padMaxX = x + halfW
+    local padMinY = y - halfH
+    local padMaxY = y + halfH
+
+    local padMinCellX = math.floor(padMinX / self.gridCellSize)
+    local padMaxCellX = math.floor(padMaxX / self.gridCellSize)
+    local padMinCellY = math.floor(padMinY / self.gridCellSize)
+    local padMaxCellY = math.floor(padMaxY / self.gridCellSize)
+
+    -- Проход 2: помечаем как удалённые точки, чьи ПИКСЕЛИ попали в зону затирания
+    for cellX = padMinCellX, padMaxCellX do
+        for cellY = padMinCellY, padMaxCellY do
+            local key = self:GetGridKey(cellX, cellY)
+            local cell = self.drawGrid[key]
+            if cell then
+                for i = #cell, 1, -1 do
+                    local point = cell[i]
+                    if point and not point.__removed then
+                        local halfW2 = (point.w or 8) * 0.5
+                        local halfH2 = (point.h or 8) * 0.5
+                        local pMinX = point.x - halfW2
+                        local pMaxX = point.x + halfW2
+                        local pMinY = point.y - halfH2
+                        local pMaxY = point.y + halfH2
+
+                        if pMaxX >= padMinX and pMinX <= padMaxX
+                           and pMaxY >= padMinY and pMinY <= padMaxY then
+                            point.__removed = true
+                            table.remove(cell, i)
+                            erasedCount = erasedCount + 1
+                        end
+                    end
+                end
+                if #cell == 0 then self.drawGrid[key] = nil end
+            end
         end
+    end
+
+    -- Затираем область на RT с теми же границами
+    self:EraseOnRT(x, y, radius)
+
+    if erasedCount > 0 then
+        self._bufferDirty = true
     end
 end
 
-function ENT:ProcessRedraw()
-    if not self._needsFullRedraw then return end
-    self._needsFullRedraw = false
-    
-    local entIndex = self:EntIndex()
-    local rtData = self:GetRTData()
-    if not rtData or not rtData.rt then return end
-    
+function ENT:CompactBuffersIfNeeded()
+    if not self._bufferDirty then return end
+    self._bufferDirty = false
+
     local newBuffer = {}
     for _, point in ipairs(self.drawPointsBuffer) do
         if not point.__removed then
@@ -618,7 +708,7 @@ function ENT:ProcessRedraw()
         end
     end
     self.drawPointsBuffer = newBuffer
-    
+
     for plyID, data in pairs(self.PlayerDrawData) do
         local newPlayerData = {}
         for _, point in ipairs(data) do
@@ -628,6 +718,16 @@ function ENT:ProcessRedraw()
         end
         self.PlayerDrawData[plyID] = newPlayerData
     end
+end
+
+function ENT:ProcessRedraw()
+    if not self._needsFullRedraw then return end
+    self._needsFullRedraw = false
+    
+    local rtData = self:GetRTData()
+    if not rtData or not rtData.rt then return end
+
+    self:CompactBuffersIfNeeded()
     
     render.PushRenderTarget(rtData.rt)
     render.Clear(0, 0, 0, 0)
@@ -639,6 +739,7 @@ end
 
 function ENT:ForceRedraw()
     self._needsFullRedraw = true
+    self._bufferDirty = true
     self.nextRedraw = 0
 end
 
@@ -692,13 +793,81 @@ function ENT:DrawChalkboard()
     render.SetColorModulation(1, 1, 1)
 end
 
+-- Переводит RT-координаты в мировые координаты доски
+function ENT:RTToWorld(rtX, rtY)
+    local pos = self:GetPos()
+    local ang = self:GetAngles()
+    ang:RotateAroundAxis(ang:Up(), 180)
+    local right = ang:Right()
+    local up = ang:Up()
+    local forward = ang:Forward()
+
+    pos = pos - forward
+    pos = pos - right
+    pos = pos + up
+
+    local halfWidth = 40.3
+    local halfHeight = 21.7
+
+    -- Нормализуем RT-координаты в [0..1]
+    local u = rtX / self.canvasSize
+    local v = rtY / self.canvasSize
+
+    -- Конвертируем в мировые координаты
+    -- topLeft = pos + up*hh + right*(-hw)
+    -- topRight = pos + up*hh + right*hw
+    -- идём вправо и вниз
+    local worldX = pos + up * halfHeight + right * (-halfWidth)
+    local worldXdir = right * (halfWidth * 2)
+    local worldYdir = up * (-halfHeight * 2)
+
+    return worldX + worldXdir * u + worldYdir * v
+end
+
+function ENT:DrawEraseDebug()
+    if not DEBUG_ERASE then return end
+    if not self._debugEraseRects then return end
+
+    local now = CurTime()
+
+    for i = #self._debugEraseRects, 1, -1 do
+        local rect = self._debugEraseRects[i]
+        if now - rect.time > ERASE_DEBUG_LIFETIME then
+            table.remove(self._debugEraseRects, i)
+        end
+    end
+
+    if #self._debugEraseRects == 0 then return end
+
+    local alpha = 255
+
+    for _, rect in ipairs(self._debugEraseRects) do
+        local age = now - rect.time
+        alpha = math.Clamp(255 * (1 - age / ERASE_DEBUG_LIFETIME), 0, 255)
+
+        local tl = self:RTToWorld(rect.minX, rect.minY)
+        local tr = self:RTToWorld(rect.maxX, rect.minY)
+        local br = self:RTToWorld(rect.maxX, rect.maxY)
+        local bl = self:RTToWorld(rect.minX, rect.maxY)
+
+        local col = Color(255, 0, 0, alpha)
+        render.DrawLine(tl, tr, col, true)
+        render.DrawLine(tr, br, col, true)
+        render.DrawLine(br, bl, col, true)
+        render.DrawLine(bl, tl, col, true)
+    end
+end
+
 function ENT:DrawRTDebug()
     if not DEBUG_RT then return end
+    if not self._debugEraseRects then
+        self._debugEraseRects = {}
+        return
+    end
 
     local entIndex = self:EntIndex()
     if not chalkboardRTs[entIndex] or not chalkboardRTs[entIndex].rt then return end
 
-    -- ====== ТОЧНО ТАКИЕ ЖЕ ВЫЧИСЛЕНИЯ, КАК В DrawChalkboard ======
     local pos = self:GetPos()
     local ang = self:GetAngles()
     ang:RotateAroundAxis(ang:Up(), 180)
@@ -717,16 +886,13 @@ function ENT:DrawRTDebug()
     local topRight    = pos + (up *  halfHeight) + (right * ( halfWidth))
     local bottomRight = pos + (up * -halfHeight) + (right * ( halfWidth))
     local bottomLeft  = pos + (up * -halfHeight) + (right * (-halfWidth))
-    -- =============================================================
 
-    -- Рисуем контур там, где сейчас РЕАЛЬНО натягивается RT
     local green = Color(0, 255, 0, 255)
     render.DrawLine(topLeft,     topRight,    green, true)
     render.DrawLine(topRight,    bottomRight, green, true)
     render.DrawLine(bottomRight, bottomLeft,  green, true)
     render.DrawLine(bottomLeft,  topLeft,     green, true)
 
-    -- Диагонали — чтобы видеть ориентацию
     render.DrawLine(topLeft,     bottomRight, Color(0, 255, 0, 80), true)
     render.DrawLine(topRight,    bottomLeft,  Color(0, 255, 0, 80), true)
 end
@@ -734,6 +900,7 @@ end
 function ENT:Draw()
     self:DrawModel()
     self:DrawChalkboard()
+    self:DrawEraseDebug()
     self:DrawLampGlow()
     if DEBUG_RT then
         self:DrawRTDebug()
@@ -743,6 +910,8 @@ end
 function ENT:Think()
     if self._needsFullRedraw == nil then self._needsFullRedraw = false end
     if self._lastEraseRedraw == nil then self._lastEraseRedraw = 0 end
+    if self._bufferDirty == nil then self._bufferDirty = false end
+    if self._lastCompact == nil then self._lastCompact = 0 end
 
     local entIndex = self:EntIndex()
     if chalkboardRTs[entIndex] and chalkboardRTs[entIndex].poolData then
@@ -770,6 +939,11 @@ function ENT:Think()
             self:ProcessRedraw()
             self._lastEraseRedraw = CurTime()
         end
+    end
+    
+    if self._bufferDirty and CurTime() - (self._lastCompact or 0) > 1.0 then
+        self:CompactBuffersIfNeeded()
+        self._lastCompact = CurTime()
     end
     
     self:NextThink(CurTime() + 0.1)
@@ -983,6 +1157,3 @@ net.Receive("ChalkboardClearPlayer", function()
         chalkboard:ClearPlayerDrawings(player)
     end
 end)
-
--- KeyRelease хук удалён: он дёргал ForceRedraw (полную перерисовку 100k+ точек)
--- после каждого отпускания ЛКМ/ПКМ, что убивало FPS при активном рисовании.

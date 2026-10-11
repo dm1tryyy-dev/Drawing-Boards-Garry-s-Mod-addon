@@ -103,12 +103,11 @@ if SERVER then
     concommand.Add("chalk_clear", function(ply)
         if not IsValid(ply) then return end
         
-        -- Защита от множественных срабатываний
         local currentTime = CurTime()
         local lastTime = lastClearTime[ply:SteamID()] or 0
         
         if currentTime - lastTime < 1.0 then
-            return -- Игнорируем повторные вызовы в течение 1 секунды
+            return
         end
         
         lastClearTime[ply:SteamID()] = currentTime
@@ -116,7 +115,7 @@ if SERVER then
         local tr = ply:GetEyeTrace()
         local ent = tr.Entity
         local class = ent:GetClass()
-        if IsValid(ent) and (class == "chalkboard" or  class == "chalkboard_oversized") then
+        if IsValid(ent) and (class == "chalkboard" or class == "chalkboard_oversized") then
             if ent.ClearChalkboard then
                 ent:ClearChalkboard()
             end
@@ -130,29 +129,6 @@ if SERVER then
             ply:ChatPrint("Look at a chalkboard to clear it!")
         end
     end)
-    
-    -- Обработчик очистки только своих рисунков
-    -- concommand.Add("chalk_clear_self", function(ply)
-    --     local tr = ply:GetEyeTrace()
-    --     local ent = tr.Entity
-    --     local class = ent:GetClass()
-    --     if IsValid(ent) and (class == "chalkboard" or  class == "chalkboard_oversized") then
-    --         if ent.ClearPlayerDrawings then
-    --             ent:ClearPlayerDrawings(ply)
-                
-    --             net.Start("ChalkboardClearPlayer")
-    --                 net.WriteEntity(ent)
-    --                 net.WriteEntity(ply)
-    --             net.SendPVS(ent:GetPos())
-                
-    --             ply:ChatPrint("Your drawings cleared!")
-    --         else
-    --             ply:ChatPrint("This chalkboard doesn't support player-specific clearing")
-    --         end
-    --     else
-    --         ply:ChatPrint("Look at a chalkboard to clear your drawings!")
-    --     end
-    -- end)
 end
 
 SWEP.Base = "weapon_base"
@@ -194,7 +170,6 @@ SWEP.ChalkMaterial = nil
 SWEP.PlayerData = {}
 SWEP.ColorIndex = 1
 
--- Функция проверки является ли энтити chalkboard
 function SWEP:IsChalkboard(entity)
     if not IsValid(entity) then return false end
     local class = entity:GetClass()
@@ -287,12 +262,7 @@ end
 
 function SWEP:GetNextColor()
     local colors = ChalkMarkerConfig.ColorOrder.chalk or {
-        "white",
-        "yellow",
-        "orange",
-        "pink",
-        "blue",
-        "green"
+        "white", "yellow", "orange", "pink", "blue", "green"
     }
 
     local currentColor = self:GetPlayerColor()
@@ -494,12 +464,7 @@ function SWEP:DrawWorldModel()
                 local offsetPos = self.WorldModelOffset or Vector(7, 1, 0)
                 local offsetAng = self.WorldModelAngle or Angle(25, -10, -5)
                 
-                local newPos, newAng = LocalToWorld(
-                    offsetPos, 
-                    offsetAng, 
-                    pos, 
-                    ang
-                )
+                local newPos, newAng = LocalToWorld(offsetPos, offsetAng, pos, ang)
                 
                 self:SetRenderOrigin(newPos)
                 self:SetRenderAngles(newAng)
@@ -526,6 +491,12 @@ function SWEP:PrimaryAttack()
     local owner = self:GetOwner()
     if not IsValid(owner) then return end
     
+    -- Блокировка в геометрическом режиме (без CLIENT — работает и на сервере)
+    if DrawingGeometry and DrawingGeometry.IsGeometryMode
+       and DrawingGeometry.IsGeometryMode() then
+        return
+    end
+
     local tr = owner:GetEyeTrace()
     
     if IsValid(tr.Entity) and self:IsChalkboard(tr.Entity) then
@@ -542,7 +513,6 @@ function SWEP:PrimaryAttack()
                 net.WriteBool(true)
             net.SendToServer()
 
-            -- Локальное применение (мгновенно, не ждём echo от сервера)
             if tr.Entity.DrawOnBoard then
                 tr.Entity:DrawOnBoard(tr.HitPos, drawColor, sizeValue or 7, true, owner)
             end
@@ -570,7 +540,6 @@ function SWEP:SecondaryAttack()
                 net.WriteBool(true)
             net.SendToServer()
 
-            -- Локальное применение (мгновенно)
             if tr.Entity.EraseOnBoard then
                 tr.Entity:EraseOnBoard(tr.HitPos, eraseSizeValue or 12, true, owner)
             end
@@ -580,7 +549,6 @@ function SWEP:SecondaryAttack()
     self:SetNextSecondaryFire(CurTime() + 0.02)
     self.WasAttacking2 = true
 end
-
 
 function SWEP:Think()
     local owner = self:GetOwner()
@@ -632,8 +600,12 @@ function SWEP:Think()
     end
 
     if CLIENT then
+        -- Блокировка всего рисования в геометрическом режиме
+        local geoBlocked = DrawingGeometry and DrawingGeometry.IsGeometryMode
+            and DrawingGeometry.IsGeometryMode()
+
         -- РИСОВАНИЕ: пока держим ЛКМ
-        if isAttacking and CurTime() >= self:GetNextPrimaryFire() then
+        if not geoBlocked and isAttacking and CurTime() >= self:GetNextPrimaryFire() then
             local tr = owner:GetEyeTrace()
             
             if IsValid(tr.Entity) and self:IsChalkboard(tr.Entity) then
@@ -649,7 +621,6 @@ function SWEP:Think()
                     net.WriteBool(isNewLine)
                 net.SendToServer()
                 
-                -- Локально (мгновенно у себя)
                 if tr.Entity.DrawOnBoard then
                     tr.Entity:DrawOnBoard(tr.HitPos, drawColor, sizeValue or 7, isNewLine, owner)
                 end
@@ -674,7 +645,6 @@ function SWEP:Think()
                     net.WriteBool(isNewLine)
                 net.SendToServer()
                 
-                -- Локально
                 if tr.Entity.EraseOnBoard then
                     tr.Entity:EraseOnBoard(tr.HitPos, eraseSizeValue or 12, isNewLine, owner)
                 end
@@ -684,8 +654,11 @@ function SWEP:Think()
             end
         end
 
-        -- Финальная отправка при отпускании кнопок
-        if self._prevPrimaryDown and not isAttacking then
+        -- Финальная отправка при отпускании кнопок.
+        -- В геометрическом режиме НЕ отправляем — иначе появляется
+        -- лишняя точка с isNewLine=false, и доска интерполирует
+        -- линию между старой и новой точкой.
+        if not geoBlocked and self._prevPrimaryDown and not isAttacking then
             local tr = owner:GetEyeTrace()
             if IsValid(tr.Entity) and self:IsChalkboard(tr.Entity) then
                 local sizeValue = self:GetDrawSizeValue()
@@ -723,7 +696,14 @@ function SWEP:Think()
             end
         end
 
-        self._prevPrimaryDown = isAttacking
+        -- Сохраняем состояние только когда геометрия выключена.
+        -- Иначе при первом отпускании в геометрическом режиме
+        -- _prevPrimaryDown останется true и вызовет отправку.
+        if not geoBlocked then
+            self._prevPrimaryDown = isAttacking
+        else
+            self._prevPrimaryDown = false
+        end
         self._prevSecondaryDown = isAttacking2
     end
 end
